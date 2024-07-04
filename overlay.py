@@ -1,11 +1,14 @@
 
-# Written almost entirely by ChatGPT
+# Written almost entirely by ChatGPT4
 
 import sys
 import os
 import subprocess
 import json
 from PIL import Image, ImageDraw, ImageFont
+
+font_path = '/home/matt/Projects/video_tools/assets/cour_bold.ttf'
+
 
 def get_video_dimensions(video_path):
     cmd = [
@@ -33,7 +36,7 @@ def create_text_overlay(video_path, text, bottom_right_text):
 
     # Define font, size and text
     font_size = int(height / 45)  # Dynamic size based on video height
-    font = ImageFont.truetype("./assets/cour_bold.ttf", font_size)
+    font = ImageFont.truetype(font_path, font_size)
 
     # Calculate text width and height
     text_width, text_height = textsize(text, font=font)
@@ -89,10 +92,10 @@ def overlay_text_on_video(video_path, overlay_image_path, output_video_path):
     #       f"\"[0:v][1:v] overlay=0:0\" -codec:a copy {output_video_path}"
 
     cmd = (
-        f"ffmpeg -i {video_path} -i {overlay_image_path} "
+        f"ffmpeg -i '{video_path}' -i {overlay_image_path} "
         f"-filter_complex "
         f"\"[0:v][1:v]scale2ref[vid][ovr];[vid][ovr]overlay=format=auto:0:0\" "
-        f"-codec:a copy {output_video_path}"
+        f"-codec:a copy '{output_video_path}'"
     )
 
     print("Executing command:", cmd)
@@ -110,13 +113,17 @@ if __name__ == "__main__":
         print("Usage: python overlay.py <video_file_path> <video_output_path> <overlay_text> <overlay_text_bottom_right> (optional)")
         sys.exit(1)
 
+    print("HEY: ", sys.argv[1])
+
     video_file_path = sys.argv[1]
     video_output_path = sys.argv[2]
     overlay_text = sys.argv[3]
-    overlay_text_2 = sys.argv[4]
+    overlay_text_2 = sys.argv[4] if len(sys.argv) > 4 else None
 
     # Generate overlay
     overlay_image_path = create_text_overlay(video_file_path, overlay_text, overlay_text_2)
 
     # Overlay text onto the video
     overlay_text_on_video(video_file_path, overlay_image_path, video_output_path)
+
+    exit(0)
