@@ -9,30 +9,30 @@ import os
 def generate_thumbnail(text1, text2, output_path):
     # Image dimensions
     width, height = 1920, 1080
-    border_size = 20
+    border_size = 50
 
     # Create a new image with a black background
-    img = Image.new('RGB', (width, height), color='black')
+    img = Image.new('RGB', (width, height), color='#222222')
     draw = ImageDraw.Draw(img)
 
     # Fonts
     try:
         font_path = "/home/matt/Projects/video_tools/assets/cour_bold.ttf"
-        font1 = ImageFont.truetype(font_path, 120)
-        font2 = ImageFont.truetype(font_path, 60)
+        font1 = ImageFont.truetype(font_path, 300)
+        font2 = ImageFont.truetype(font_path, 100)
     except IOError:
         print("Font file not found.")
         sys.exit(1)
 
     # Calculate text size and position for text1
-    text1_size = draw.textsize(text1, font=font1)
-    text1_x = (width - text1_size[0]) // 2
-    text1_y = (height - text1_size[1]) // 2 - 30  # Adjust y to leave space for text2
+    text1_width = draw.textlength(text1, font=font1)
+    text1_x = (width - text1_width) // 2
+    text1_y = (height - 500) // 2 - 30  # Adjust y to leave space for text2
 
     # Calculate text size and position for text2
-    text2_size = draw.textsize(text2, font=font2)
-    text2_x = (width - text2_size[0]) // 2
-    text2_y = text1_y + text1_size[1] + 10  # Position below text1
+    text2_width = draw.textlength(text2, font=font2)
+    text2_x = (width - text2_width) // 2
+    text2_y = text1_y + 500 + 10  # Position below text1
 
     # Draw text on the image
     draw.text((text1_x, text1_y), text1, font=font1, fill="white")
