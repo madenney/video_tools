@@ -33,6 +33,7 @@ Generate a 1920x1080 thumbnail with auto-sized text:
 python thumbnail.py "Main Title" "Sub text"
 python thumbnail.py "Main Title" "Sub text" /path/to/custom.png
 python thumbnail.py -t
+python thumbnail.py -e
 ```
 
 Test mode creates `output/test_thumbnail_N/` with multiple random samples.

@@ -255,6 +255,23 @@ def generate_thumbnail(text1, text2, output_path):
     img.save(output_path)
 
 
+def generate_empty_thumbnail(output_path):
+    width, height = BASE_WIDTH, BASE_HEIGHT
+    border_size = BASE_BORDER_SIZE
+
+    img = Image.new("RGB", (width, height), color="#222222")
+    draw = ImageDraw.Draw(img)
+
+    for i in range(border_size):
+        draw.rectangle([i, i, width - 1 - i, height - 1 - i], outline="white")
+
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    img.save(output_path)
+
+
 def next_test_output_dir(base_output_dir):
     max_index = 0
     if os.path.isdir(base_output_dir):
@@ -297,11 +314,20 @@ if __name__ == "__main__":
         action="store_true",
         help="Generate a batch of test thumbnails in output/test_thumbnail_N/.",
     )
+    parser.add_argument(
+        "-e",
+        "--empty",
+        action="store_true",
+        help="Generate an empty thumbnail (background + border only).",
+    )
     parser.add_argument("text1", nargs="?", help="Primary text")
     parser.add_argument("text2", nargs="?", help="Secondary text")
     parser.add_argument("output_path", nargs="?", help="Output PNG path")
 
     args = parser.parse_args()
+
+    if args.test and args.empty:
+        parser.error("--test and --empty cannot be used together.")
 
     if args.test:
         extra_args = [args.text1, args.text2, args.output_path]
@@ -310,6 +336,15 @@ if __name__ == "__main__":
         output_dir = next_test_output_dir(OUTPUT_DIR)
         generate_test_thumbnails(output_dir)
         print(f"Generated {TEST_THUMBNAIL_COUNT} thumbnails in {output_dir}")
+        raise SystemExit(0)
+
+    if args.empty:
+        extra_args = [args.text1, args.text2]
+        if any(arg is not None for arg in extra_args):
+            parser.error("Empty mode does not accept text arguments.")
+        output_path = args.output_path or os.path.join(OUTPUT_DIR, "thumbnail.png")
+        generate_empty_thumbnail(output_path)
+        print(f"Thumbnail saved to {output_path}")
         raise SystemExit(0)
 
     if args.text1 is None or args.text2 is None:
