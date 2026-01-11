@@ -9,7 +9,7 @@ SCRIPT_DIR = os.path.dirname(__file__)
 
 SOURCE_PATTERNS = {
     "youtube": re.compile(
-        r"(https?://)?(www\.)?(m\.)?(youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/)",
+        r"(https?://)?(www\.)?(m\.)?(youtube\.com/watch\?v=|youtube\.com/shorts/|youtube\.com/live/|youtu\.be/)",
         re.IGNORECASE,
     ),
     "twitter": re.compile(
