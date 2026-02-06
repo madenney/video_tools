@@ -19,7 +19,7 @@ def main():
 +--------------------------------------------------------------------------+
 | DEPENDENCIES                                                             |
 +--------------------------------------------------------------------------+
-| ffmpeg/ffprobe: overlay.py, apply_overlay.py                             |
+| ffmpeg/ffprobe: overlay.py, apply_overlay.py, accurate_slice.py          |
 | Pillow:          overlay + thumbnail tools                               |
 | yt-dlp:          download_video.py, yt_downloader.py,                    |
 |                 twitter_downloader.py, twitch_downloader.py              |
@@ -40,6 +40,10 @@ def main():
 |   Generate thumbnails at any size with auto-sized text.                  |
 |   Usage: python thumbnail.py "Main" "Sub" [output.png]                   |
 |   Test:  python thumbnail.py -t                                          |
+|                                                                          |
+| accurate_slice.py                                                        |
+|   Frame-accurate slicing by transcoding to an intraframe intermediate.   |
+|   Usage: python accurate_slice.py input.mp4 output.mp4 0:10 0:15         |
 |                                                                          |
 | download_video.py                                                        |
 |   Auto-detects YouTube/Twitch/Twitter(X) and dispatches to the           |

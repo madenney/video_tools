@@ -38,6 +38,16 @@ python thumbnail.py -e
 
 Test mode creates `output/test_thumbnail_N/` with multiple random samples.
 
+## Accurate slice
+
+Frame-accurate slicing by transcoding to an intraframe intermediate first:
+```bash
+python accurate_slice.py input.mp4 output.mp4 00:01:10 00:01:35
+python accurate_slice.py input.mov output.mp4 1:10 1:35.5
+```
+
+Time format: `ss`, `mm:ss`, or `hh:mm:ss` (fractions allowed in seconds).
+
 ## Unified downloader
 
 Download from YouTube, Twitch, or Twitter/X with one script:

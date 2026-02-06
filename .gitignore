@@ -1,2 +1,4 @@
 output/
+.working_copies/
 .env
+venv/
