@@ -2,3 +2,4 @@ output/
 .working_copies/
 .env
 venv/
+__pycache__/
