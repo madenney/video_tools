@@ -33,8 +33,9 @@ Browser-based interface for the accurate slice pipeline. Flask backend serves a 
 
 ### Download dispatcher
 - `download_video.py` — Regex-based URL detection, dispatches to the appropriate downloader via subprocess
-- `yt_downloader.py`, `twitch_downloader.py`, `twitter_downloader.py` — Each wraps yt-dlp with platform-specific defaults and output template handling
+- `yt_downloader.py`, `twitch_downloader.py`, `twitter_downloader.py`, `instagram_downloader.py` — Each wraps yt-dlp with platform-specific defaults and output template handling
 - `twitter_downloader.py` has its own `.env` loader for `YT_DLP_PATH` override
+- `instagram_downloader.py` handles `/p/`, `/tv/`, `/reel/`, `/reels/` URLs (with optional `username/` prefix); default filename appends the shortcode id since IG titles aren't unique
 
 ### Thumbnail generator (`thumbnail.py`)
 Generates 1920x1080 PNGs with auto-scaled text using binary search for optimal font size. Has test mode (`-t`) that creates 30 random samples and empty mode (`-e`).

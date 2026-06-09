@@ -13,11 +13,15 @@ SOURCE_PATTERNS = {
         re.IGNORECASE,
     ),
     "twitter": re.compile(
-        r"(https?://)?(www\.)?(twitter\.com|x\.com)/.+/status/\d+",
+        r"(https?://)?(www\.)?(twitter\.com|x\.com)/(.+/status/\d+|i/broadcasts/.+)",
         re.IGNORECASE,
     ),
     "twitch": re.compile(
         r"(https?://)?(www\.)?twitch\.tv/(videos/\d+|[^/]+/video/\d+)",
+        re.IGNORECASE,
+    ),
+    "instagram": re.compile(
+        r"(https?://)?(www\.)?instagram\.com/([^/]+/)?(p|tv|reel|reels)/[\w-]+",
         re.IGNORECASE,
     ),
 }
@@ -26,6 +30,7 @@ SCRIPT_MAP = {
     "youtube": "yt_downloader.py",
     "twitter": "twitter_downloader.py",
     "twitch": "twitch_downloader.py",
+    "instagram": "instagram_downloader.py",
 }
 
 
@@ -51,9 +56,9 @@ def dispatch(source, url, output_path, audio_only):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download videos from YouTube, Twitch, or Twitter/X.",
+        description="Download videos from YouTube, Twitch, Twitter/X, or Instagram.",
     )
-    parser.add_argument("url", help="YouTube/Twitch/Twitter/X URL")
+    parser.add_argument("url", help="YouTube/Twitch/Twitter/X/Instagram URL")
     parser.add_argument(
         "output_path",
         nargs="?",
@@ -68,7 +73,7 @@ def main():
 
     source = detect_source(args.url)
     if not source:
-        print("Unrecognized URL. Expected YouTube, Twitch, or Twitter/X.", file=sys.stderr)
+        print("Unrecognized URL. Expected YouTube, Twitch, Twitter/X, or Instagram.", file=sys.stderr)
         sys.exit(1)
 
     sys.exit(dispatch(source, args.url, args.output_path, args.audio_only))
