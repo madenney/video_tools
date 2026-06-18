@@ -31,6 +31,31 @@
   .landing-icon { font-size: 4em; margin-bottom: 16px; opacity: 0.4; }
   .landing-text { font-size: 1.2em; color: #888; margin-bottom: 6px; }
   .landing-or { color: #555; margin-bottom: 12px; }
+  .recents {
+    margin-top: 28px; text-align: left;
+    width: 360px; max-width: 80vw; margin-left: auto; margin-right: auto;
+  }
+  .recents-title {
+    font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #666; margin-bottom: 8px; padding-left: 4px;
+  }
+  .recents ul { list-style: none; margin: 0; padding: 0; }
+  .recent-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border-radius: 5px; background: #161616;
+    border: 1px solid #262626; margin-bottom: 5px;
+  }
+  .recent-item:hover { background: #1d2733; border-color: #2f5e9e; }
+  .recent-name {
+    flex: 1; cursor: pointer; color: #cfcfcf;
+    font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .recent-del {
+    flex-shrink: 0; padding: 0; width: 22px; height: 22px; line-height: 1;
+    font-size: 1.1em; background: transparent; color: #777;
+    border: none; border-radius: 4px; cursor: pointer;
+  }
+  .recent-del:hover { background: #3d1e1e; color: #f57a7a; }
 
   button {
     background: #3a3a3a; color: #e0e0e0; border: 1px solid #555;
@@ -70,14 +95,64 @@
   .video-error {
     color: #666; font-size: 1.1em;
   }
+  .video-wrap { position: relative; }
+  .spinner-overlay {
+    position: absolute; inset: 0; z-index: 5;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; background: rgba(0, 0, 0, 0.55);
+  }
+  .spinner-ring {
+    width: 48px; height: 48px; border-radius: 50%;
+    border: 4px solid #333; border-top-color: #6a9ef5;
+    animation: spin 0.8s linear infinite;
+  }
+  .spinner-label { color: #ccc; font-size: 0.9em; }
+  .spinner-bar {
+    width: 240px; max-width: 60%; height: 6px;
+    background: #333; border-radius: 3px; overflow: hidden;
+  }
+  .spinner-bar-fill {
+    height: 100%; width: 0%; background: #6a9ef5;
+    transition: width 0.3s ease;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* Controls below video */
   .controls { flex-shrink: 0; padding-top: 8px; }
 
   /* Scrubber */
+  .scrub-wrap { position: relative; height: 18px; display: flex; align-items: center; }
+  .scrub-track {
+    position: absolute; left: 0; right: 0; height: 8px;
+    background: #333; border-radius: 4px; pointer-events: none;
+  }
+  .range-fill {
+    position: absolute; height: 8px; background: #2f5e9e;
+    border-radius: 4px; pointer-events: none; display: none; z-index: 1;
+  }
+  .playhead {
+    position: absolute; top: -5px; width: 2px; height: 28px;
+    background: #fff; z-index: 4; pointer-events: none;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); display: none;
+  }
+  .marker {
+    position: absolute; top: -6px; width: 14px; height: 30px;
+    border-radius: 4px; z-index: 3; display: none;
+    cursor: ew-resize; pointer-events: auto; touch-action: none;
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+  }
+  .marker::after {  /* grip line */
+    content: ''; position: absolute; left: 50%; top: 7px; bottom: 7px;
+    width: 2px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.55);
+  }
+  .marker.start { background: #62e562; }
+  .marker.stop { background: #f59362; }
+  .marker.dragging { box-shadow: 0 0 8px 2px #6a9ef5; }
   input[type="range"] {
     -webkit-appearance: none; width: 100%; height: 8px;
-    background: #333; border-radius: 4px; outline: none; cursor: pointer;
+    background: transparent; border-radius: 4px; outline: none; cursor: pointer;
+    position: relative; z-index: 2;
   }
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none; width: 18px; height: 18px;
@@ -88,7 +163,7 @@
     border-radius: 50%; cursor: pointer; border: none;
   }
   input[type="range"]::-moz-range-track {
-    background: #333; height: 8px; border-radius: 4px;
+    background: transparent; height: 8px; border-radius: 4px;
   }
 
   /* Transport row */
@@ -126,6 +201,11 @@
   }
   .tc-group input[type="text"]:focus { outline: none; border-color: #6a9ef5; }
   .tc-group button { font-size: 0.78em; padding: 6px 8px; }
+  .set-btn { font-weight: 600; color: #111; border: none; }
+  .set-btn.start { background: #62e562; }
+  .set-btn.start:hover { background: #7af57a; }
+  .set-btn.stop { background: #f59362; }
+  .set-btn.stop:hover { background: #f5a07a; }
 
   .status {
     font-size: 0.85em; padding: 6px 10px; border-radius: 4px; display: none;
@@ -153,33 +233,46 @@
     <div class="landing-text">Drop a video file here</div>
     <div class="landing-or">or</div>
     <button onclick="openFile()">Open File</button>
+    <div id="recents" class="recents" style="display:none">
+      <div class="recents-title">Recent</div>
+      <ul id="recentList"></ul>
+    </div>
   </div>
 </div>
 
 <div id="main" style="display:none">
   <div class="header">
     <span class="filename" id="fileName"></span>
-    <button onclick="openFile()">Change</button>
+    <button onclick="showLanding()">Change</button>
   </div>
 
   <div class="video-wrap">
     <video id="player"></video>
     <div class="video-error" id="videoError" style="display:none">Preview unavailable for this codec</div>
+    <div class="spinner-overlay" id="spinner" style="display:none">
+      <div class="spinner-ring"></div>
+      <div class="spinner-label" id="spinnerLabel">Loading video&hellip;</div>
+      <div class="spinner-bar" id="spinnerBar" style="display:none">
+        <div class="spinner-bar-fill" id="spinnerBarFill"></div>
+      </div>
+    </div>
   </div>
 
   <div class="controls">
-    <input type="range" id="scrubber" min="0" max="100" step="any" value="0">
+    <div class="scrub-wrap">
+      <div class="scrub-track"></div>
+      <div class="range-fill" id="rangeFill"></div>
+      <input type="range" id="scrubber" min="0" max="100" step="any" value="0">
+      <div class="playhead" id="playhead"></div>
+      <div class="marker start" id="markStart" title="Start"></div>
+      <div class="marker stop" id="markStop" title="Stop"></div>
+    </div>
     <div class="transport">
-      <button id="playBtn" onclick="togglePlay()" title="Space">&#9654;</button>
-      <button onclick="step(-60)">-1m</button>
-      <button onclick="step(-10)">-10s</button>
-      <button onclick="step(-1)">-1s</button>
-      <button onclick="stepFrame(-1)">&lt;1f</button>
+      <button id="playBtn" onclick="togglePlay()" title="Play / pause (Space)">&#9654; Play</button>
+      <button onclick="stepFrame(-1)" title="Previous frame">&lt;1f</button>
       <span class="time-display" id="timeDisplay">0:00.0 / 0:00</span>
-      <button onclick="stepFrame(1)">1f&gt;</button>
-      <button onclick="step(1)">+1s</button>
-      <button onclick="step(10)">+10s</button>
-      <button onclick="step(60)">+1m</button>
+      <button onclick="stepFrame(1)" title="Next frame">1f&gt;</button>
+      <button id="playSelBtn" onclick="playSelection()" title="Play only the selected range">&#9654; Selection</button>
     </div>
     <div class="meta" id="videoMeta"></div>
   </div>
@@ -188,12 +281,12 @@
     <div class="tc-group">
       <label>Start:</label>
       <input type="text" id="startTC" placeholder="0:00">
-      <button onclick="useCurrentTime('start')">Set</button>
+      <button class="set-btn start" onclick="useCurrentTime('start')" title="Set start to the current playhead position">⇤ Start here</button>
     </div>
     <div class="tc-group">
       <label>Stop:</label>
       <input type="text" id="stopTC" placeholder="1:00">
-      <button onclick="useCurrentTime('stop')">Set</button>
+      <button class="set-btn stop" onclick="useCurrentTime('stop')" title="Set end to the current playhead position">End here ⇥</button>
     </div>
     <button class="primary" id="sliceBtn" onclick="startSlice()">Slice</button>
     <span class="status" id="statusBox"></span>
@@ -210,6 +303,32 @@
   const statusBox = document.getElementById('statusBox');
   const downloadArea = document.getElementById('downloadArea');
   const sliceBtn = document.getElementById('sliceBtn');
+  const startTCEl = document.getElementById('startTC');
+  const stopTCEl = document.getElementById('stopTC');
+  const markStart = document.getElementById('markStart');
+  const markStop = document.getElementById('markStop');
+  const rangeFill = document.getElementById('rangeFill');
+  const spinner = document.getElementById('spinner');
+  const spinnerLabel = document.getElementById('spinnerLabel');
+  const spinnerBar = document.getElementById('spinnerBar');
+  const spinnerBarFill = document.getElementById('spinnerBarFill');
+  let spinnerBase = 'Loading video…';
+
+  function showSpinner(label) {
+    spinnerLabel.innerHTML = label || 'Loading video&hellip;';
+    spinnerBase = spinnerLabel.textContent;  // decoded (handles &hellip;)
+    spinnerBar.style.display = 'none';        // indeterminate until progress arrives
+    spinnerBarFill.style.width = '0%';
+    spinner.style.display = 'flex';
+  }
+  function setSpinnerProgress(pct) {
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
+    spinner.style.display = 'flex';
+    spinnerBar.style.display = 'block';
+    spinnerBarFill.style.width = pct + '%';
+    spinnerLabel.textContent = spinnerBase + ' ' + pct + '%';
+  }
+  function hideSpinner() { spinner.style.display = 'none'; }
 
   let selectedFile = '';
   let videoDuration = 0;
@@ -256,8 +375,44 @@
       loadVideo(text.split(/\r?\n/)[0].trim());
       return;
     }
-    alert('Could not read file path from drop. Try the Open File button.');
+    // Fallback: browser exposed the file only as a blob (no path).
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) {
+      // Dropping copies the whole file to the server. For large files that's
+      // gigabytes of needless duplication — steer to the native picker, which
+      // loads by real path with zero copy.
+      const LARGE_BYTES = 250 * 1024 * 1024;
+      if (file.size > LARGE_BYTES) {
+        alert('"' + file.name + '" is ' + Math.round(file.size / 1e6) + ' MB.\n\n' +
+          'Dropping would copy the whole file to the server. Use the Open File ' +
+          'picker instead to load it in place (no copy).');
+        openFile();
+        return;
+      }
+      uploadFile(file);
+      return;
+    }
+    alert('Could not read dropped file (types: ' +
+      (Array.from(e.dataTransfer.types || []).join(', ') || 'none') +
+      '). Try the Open File button.');
   });
+
+  async function uploadFile(file) {
+    document.getElementById('fileName').textContent = 'Uploading ' + file.name + '...';
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.path) {
+        loadVideo(data.path);
+      } else {
+        alert(data.error || 'Upload failed');
+      }
+    } catch (err) {
+      alert('Upload failed: ' + err);
+    }
+  }
 
   // --- File picker ---
   async function openFile() {
@@ -277,12 +432,70 @@
     }
   }
 
+  // --- Recent clips (persisted in localStorage) ---
+  const RECENTS_KEY = 'sliceUI:recents';
+  const RECENTS_MAX = 12;
+
+  function getRecents() {
+    try { return JSON.parse(localStorage.getItem(RECENTS_KEY)) || []; }
+    catch (e) { return []; }
+  }
+  function saveRecents(list) {
+    try { localStorage.setItem(RECENTS_KEY, JSON.stringify(list)); } catch (e) {}
+  }
+  function addRecent(path) {
+    const name = path.split('/').pop();
+    let list = getRecents().filter(r => r.path !== path);
+    list.unshift({ path: path, name: name });
+    saveRecents(list.slice(0, RECENTS_MAX));
+    renderRecents();
+  }
+  function removeRecent(path) {
+    saveRecents(getRecents().filter(r => r.path !== path));
+    renderRecents();
+  }
+  function renderRecents() {
+    const list = getRecents();
+    const wrap = document.getElementById('recents');
+    const ul = document.getElementById('recentList');
+    ul.innerHTML = '';
+    if (!list.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    list.forEach(r => {
+      const li = document.createElement('li');
+      li.className = 'recent-item';
+      const name = document.createElement('span');
+      name.className = 'recent-name';
+      name.textContent = r.name;
+      name.title = r.path;
+      name.onclick = () => loadVideo(r.path);
+      const del = document.createElement('button');
+      del.className = 'recent-del';
+      del.innerHTML = '&times;';
+      del.title = 'Remove from recent';
+      del.onclick = (e) => { e.stopPropagation(); removeRecent(r.path); };
+      li.appendChild(name);
+      li.appendChild(del);
+      ul.appendChild(li);
+    });
+  }
+
+  function showLanding() {
+    document.getElementById('main').style.display = 'none';
+    document.getElementById('landing').style.display = '';
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    player.removeAttribute('src');
+    renderRecents();
+  }
+
   // --- Load video ---
   function loadVideo(path) {
     selectedFile = path;
+    addRecent(path);
     document.getElementById('fileName').textContent = path.split('/').pop();
     document.getElementById('landing').style.display = 'none';
     document.getElementById('main').style.display = '';
+    showSpinner('Loading video&hellip;');
 
     // Reset
     statusBox.className = 'status';
@@ -297,6 +510,7 @@
       .then(r => r.json())
       .then(info => {
         if (info.error) {
+          hideSpinner();
           videoError.textContent = 'Probe error: ' + info.error;
           videoError.style.display = '';
           player.style.display = 'none';
@@ -308,6 +522,12 @@
         } else {
           prepareWorkingCopy(path, info.format_status);
         }
+      })
+      .catch(err => {
+        hideSpinner();
+        videoError.textContent = 'Probe failed: ' + err;
+        videoError.style.display = '';
+        player.style.display = 'none';
       });
   }
 
@@ -326,6 +546,10 @@
     if (info.duration) {
       videoDuration = info.duration;
       parts.push(formatTime(info.duration));
+      // Default the trim range to the whole clip.
+      startTCEl.value = formatTimecode(0);
+      stopTCEl.value = formatTimecode(info.duration);
+      updateMarkers();
     }
     if (info.has_audio) parts.push('audio');
     document.getElementById('videoMeta').textContent = parts.join(' \u00b7 ');
@@ -336,16 +560,53 @@
     player.style.display = '';
     videoError.style.display = 'none';
     player.onerror = () => {
+      hideSpinner();
       player.style.display = 'none';
       videoError.textContent = 'Preview unavailable for this codec';
       videoError.style.display = '';
     };
+    player.addEventListener('loadeddata', () => skipLeadingBlack(), { once: true });
+  }
+
+  // Many videos open on several seconds of black (fades, title cards). Sitting
+  // on a black frame at 0:00 looks broken, so sample frames from the start and
+  // advance the playhead to the first one with real picture. Bounded so it
+  // never wanders far or seeks forever. Does NOT move the start trim marker.
+  function skipLeadingBlack() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64; canvas.height = 36;
+    const ctx = canvas.getContext('2d');
+    const MAX_T = 15, STEP = 0.5, LUMA_MIN = 18;
+    let t = 0;
+
+    function meanLuma() {
+      try {
+        ctx.drawImage(player, 0, 0, canvas.width, canvas.height);
+        const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        }
+        return sum / (d.length / 4);
+      } catch (e) {
+        return null;  // unreadable — bail out, leave playhead alone
+      }
+    }
+    function step() {
+      const luma = meanLuma();
+      if (luma === null || luma >= LUMA_MIN || t >= MAX_T) return;  // found picture / gave up
+      t += STEP;
+      player.addEventListener('seeked', step, { once: true });
+      player.currentTime = t;
+    }
+    if (player.paused) step();
   }
 
   function prepareWorkingCopy(path, formatStatus) {
-    const label = formatStatus === 'remux' ? 'Remuxing to MP4...' : 'Converting to H.264 MP4...';
+    const label = formatStatus === 'remux' ? 'Remuxing to MP4...' : 'Building H.264 preview…';
     statusBox.className = 'status visible running';
     statusBox.textContent = label;
+    showSpinner(label);
 
     fetch('/api/prepare', {
       method: 'POST',
@@ -360,11 +621,13 @@
       } else if (data.job_id) {
         listenToPrepare(data.job_id, path);
       } else if (data.error) {
+        hideSpinner();
         statusBox.className = 'status visible error';
         statusBox.textContent = data.error;
       }
     })
     .catch(err => {
+      hideSpinner();
       statusBox.className = 'status visible error';
       statusBox.textContent = 'Conversion failed: ' + err;
     });
@@ -375,11 +638,15 @@
     es.onmessage = function(e) {
       const data = JSON.parse(e.data);
       statusBox.textContent = data.message;
+      if (data.status === 'running' && typeof data.progress === 'number') {
+        setSpinnerProgress(data.progress);
+      }
       if (data.status === 'complete') {
         statusBox.className = 'status';
         setVideoSrc(path);
         es.close();
       } else if (data.status === 'error') {
+        hideSpinner();
         statusBox.className = 'status visible error';
         es.close();
       }
@@ -392,20 +659,47 @@
   }
 
   // --- Scrubber ---
+  const playhead = document.getElementById('playhead');
+  function updatePlayhead() {
+    if (videoDuration <= 0) { playhead.style.display = 'none'; return; }
+    const f = Math.max(0, Math.min(1, player.currentTime / videoDuration));
+    playhead.style.display = 'block';
+    playhead.style.left = `calc(9px + (100% - 18px) * ${f} - 1px)`;
+  }
+
   player.addEventListener('loadedmetadata', () => {
     scrubber.max = player.duration || 100;
     videoDuration = player.duration;
+    updateMarkers();
+    updatePlayhead();
   });
+  // Hide the spinner once enough has buffered to start playback.
+  player.addEventListener('canplay', hideSpinner);
+  player.addEventListener('loadeddata', hideSpinner);
+  // Re-show it if playback stalls waiting on the buffer (long/seeking videos).
+  player.addEventListener('waiting', () => showSpinner('Buffering&hellip;'));
+  player.addEventListener('playing', hideSpinner);
   player.addEventListener('timeupdate', () => {
     if (!isScrubbing) scrubber.value = player.currentTime;
     updateTimeDisplay();
+    updatePlayhead();
+    // Stop at the end of the selection when "Play selection" is active.
+    if (playingSelection) {
+      const e = parseTC(stopTCEl.value) ?? videoDuration;
+      if (player.currentTime >= e) { player.pause(); playingSelection = false; }
+    }
   });
+  player.addEventListener('seeked', updatePlayhead);
 
   scrubber.addEventListener('mousedown', () => isScrubbing = true);
   scrubber.addEventListener('touchstart', () => isScrubbing = true);
+  // Click/drag anywhere on the bar: move the playhead there. If the video was
+  // playing it keeps playing from the new spot; if paused it stays put.
   scrubber.addEventListener('input', () => {
+    playingSelection = false;
     player.currentTime = parseFloat(scrubber.value);
     updateTimeDisplay();
+    updatePlayhead();
   });
   document.addEventListener('mouseup', () => { isScrubbing = false; });
   document.addEventListener('touchend', () => { isScrubbing = false; });
@@ -416,11 +710,29 @@
 
   // --- Play / Pause ---
   function togglePlay() {
-    if (player.paused) { player.play(); playBtn.innerHTML = '&#9646;&#9646;'; }
-    else { player.pause(); playBtn.innerHTML = '&#9654;'; }
+    playingSelection = false;  // a plain play is not a selection play
+    if (player.paused) player.play();
+    else player.pause();
   }
-  player.addEventListener('pause', () => { playBtn.innerHTML = '&#9654;'; });
-  player.addEventListener('play', () => { playBtn.innerHTML = '&#9646;&#9646;'; });
+  player.addEventListener('pause', () => { playBtn.innerHTML = '&#9654; Play'; });
+  player.addEventListener('play', () => { playBtn.innerHTML = '&#9646;&#9646; Pause'; });
+
+  // --- Play selection (just the start→end range, then stop) ---
+  let playingSelection = false;
+  function playSelection() {
+    const s = parseTC(startTCEl.value) ?? 0;
+    const e = parseTC(stopTCEl.value) ?? videoDuration;
+    if (e <= s) return;
+    if (playingSelection && !player.paused) {  // toggle off
+      player.pause();
+      playingSelection = false;
+      return;
+    }
+    // Jump to the start of the selection (or current spot if already inside it).
+    if (player.currentTime < s || player.currentTime >= e) player.currentTime = s;
+    playingSelection = true;
+    player.play();
+  }
 
   // --- Stepping ---
   function step(seconds) {
@@ -441,9 +753,121 @@
   // --- Timecodes ---
   function useCurrentTime(which) {
     const tc = formatTimecode(player.currentTime);
-    if (which === 'start') document.getElementById('startTC').value = tc;
-    else document.getElementById('stopTC').value = tc;
+    if (which === 'start') startTCEl.value = tc;
+    else stopTCEl.value = tc;
+    updateMarkers();
   }
+
+  // Parse "ss(.s)", "mm:ss", or "hh:mm:ss" -> seconds (null if blank/invalid)
+  function parseTC(str) {
+    str = (str || '').trim();
+    if (!str) return null;
+    const parts = str.split(':').map(Number);
+    if (parts.some(isNaN)) return null;
+    let sec;
+    if (parts.length === 1) sec = parts[0];
+    else if (parts.length === 2) sec = parts[0] * 60 + parts[1];
+    else if (parts.length === 3) sec = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    else return null;
+    return sec;
+  }
+
+  // Position the start/stop markers (and the highlighted range) on the scrub bar.
+  // The thumb center travels from 9px to width-9px, so we offset by the 9px radius.
+  function setMarker(el, sec) {
+    if (sec == null || videoDuration <= 0) {
+      el.style.display = 'none';
+      return;
+    }
+    // Clamp into range so a marker never disappears when its timecode is a hair
+    // past the player's reported duration (probe vs decoded length can differ).
+    const f = Math.max(0, Math.min(1, sec / videoDuration));
+    el.style.display = 'block';
+    el.style.left = `calc(9px + (100% - 18px) * ${f} - 7px)`;
+  }
+  function updateMarkers() {
+    const s = parseTC(startTCEl.value);
+    const e = parseTC(stopTCEl.value);
+    setMarker(markStart, s);
+    setMarker(markStop, e);
+    if (videoDuration > 0 && s != null && e != null && e > s) {
+      const fs = Math.max(0, Math.min(1, s / videoDuration));
+      const fe = Math.max(0, Math.min(1, e / videoDuration));
+      rangeFill.style.display = 'block';
+      rangeFill.style.left = `calc(9px + (100% - 18px) * ${fs})`;
+      rangeFill.style.width = `calc((100% - 18px) * ${fe - fs})`;
+    } else {
+      rangeFill.style.display = 'none';
+    }
+  }
+  startTCEl.addEventListener('input', updateMarkers);
+  stopTCEl.addEventListener('input', updateMarkers);
+
+  // --- Draggable trim handles ---
+  const scrubWrap = document.querySelector('.scrub-wrap');
+  let dragHandle = null;  // 'start' | 'stop'
+
+  // Map a clientX over the scrub bar to a time in seconds (clamped to clip).
+  function xToSeconds(clientX) {
+    const rect = scrubWrap.getBoundingClientRect();
+    const usable = rect.width - 18;  // thumb radius (9px) on each side
+    let f = usable > 0 ? (clientX - rect.left - 9) / usable : 0;
+    f = Math.max(0, Math.min(1, f));
+    return f * videoDuration;
+  }
+
+  function beginDrag(which, el, e) {
+    if (videoDuration <= 0) return;
+    dragHandle = which;
+    el.classList.add('dragging');
+    el.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+  function onHandleMove(e) {
+    if (!dragHandle) return;
+    let sec = xToSeconds(e.clientX);
+    const startSec = parseTC(startTCEl.value) ?? 0;
+    const stopSec = parseTC(stopTCEl.value) ?? videoDuration;
+    if (dragHandle === 'start') {
+      sec = Math.min(sec, stopSec);
+      startTCEl.value = formatTimecode(sec);
+    } else {
+      sec = Math.max(sec, startSec);
+      stopTCEl.value = formatTimecode(sec);
+    }
+    requestSeek(sec);  // preview the boundary frame (throttled)
+    updateMarkers();
+  }
+  function endDrag() {
+    if (!dragHandle) return;
+    markStart.classList.remove('dragging');
+    markStop.classList.remove('dragging');
+    dragHandle = null;
+  }
+  markStart.addEventListener('pointerdown', e => beginDrag('start', markStart, e));
+  markStop.addEventListener('pointerdown', e => beginDrag('stop', markStop, e));
+  document.addEventListener('pointermove', onHandleMove);
+  document.addEventListener('pointerup', endDrag);
+
+  // Coalesced seeking: while a seek is in flight, keep only the latest target
+  // and issue it when the current one finishes. Stops drag-seeks from flooding
+  // the player with dozens of range requests per second.
+  let pendingSeek = null, seekInFlight = false;
+  function requestSeek(t) {
+    pendingSeek = t;
+    if (!seekInFlight) flushSeek();
+  }
+  function flushSeek() {
+    if (pendingSeek == null) return;
+    seekInFlight = true;
+    const t = pendingSeek;
+    pendingSeek = null;
+    player.currentTime = t;
+  }
+  player.addEventListener('seeked', () => {
+    seekInFlight = false;
+    if (pendingSeek != null) flushSeek();
+  });
 
   // --- Slice ---
   function startSlice() {
@@ -528,6 +952,24 @@
     if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + sStr;
     return m + ':' + sStr;
   }
+
+  // --- Startup: restore recents, auto-load the most recent clip if it survives ---
+  (function init() {
+    renderRecents();
+    const list = getRecents();
+    if (!list.length) return;
+    const last = list[0];
+    fetch('/api/probe?path=' + encodeURIComponent(last.path))
+      .then(r => r.json())
+      .then(info => {
+        if (info && !info.error) {
+          loadVideo(last.path);
+        } else {
+          removeRecent(last.path);  // file moved/deleted — drop it, stay on landing
+        }
+      })
+      .catch(() => {});
+  })();
 </script>
 </body>
 </html>
