@@ -25,11 +25,21 @@ Collection of standalone Python CLI scripts for video overlays, thumbnails, and 
 Frame-accurate video slicing using boundary re-encode: only ~4s chunks around each cut point are re-encoded through an intraframe intermediate (ffv1), while the bulk of the clip is stream-copied (fast, zero quality loss). Short clips (<4s) use a single-region re-encode path.
 - `slice_tools/timecode.py` — Parses `ss`, `mm:ss`, `hh:mm:ss` formats to seconds
 - `slice_tools/ffmpeg_utils.py` — Shared helpers: `run_cmd()`, `has_audio()`, `probe_stream_types()`, `probe_video_info()`, `probe_duration()`
-- `slice_tools/slice_ops.py` — `boundary_slice()` orchestrator, plus helpers: `build_encoder_args()`, `stream_copy_segment()`, `cut_and_encode_segment()`, `concat_segments()`. Legacy `convert_to_intraframe()` and `slice_precise()` still present.
+- `slice_tools/slice_ops.py` — Two cut engines:
+  - `accurate_cut()` — accurate seek (`-ss` before `-i`) + full re-encode of the span. **Exactly** frame-accurate; the slower but correct option, and what `slice_ui.py` uses by default.
+  - `boundary_slice()` — the fast path. Because the bulk is stream-copied, the cut snaps to keyframes and the output can run ~2 frames long. Only use where that slop is acceptable.
+  - Helpers: `build_encoder_args()`, `stream_copy_segment()`, `cut_and_encode_segment()`, `concat_segments()`. Legacy `convert_to_intraframe()` and `slice_precise()` still present.
 
 ### Slice web UI (`slice_ui.py`)
-Browser-based interface for the accurate slice pipeline. Flask backend serves a single-page app that lets you browse local video files, preview them in an HTML5 player, grab timecodes from the current playback position, and trigger `boundary_slice()` jobs. Async via threading, SSE for progress updates. Output goes to `output/`.
-- `templates/slice.html` — Single HTML template with inline CSS/JS (dark theme, vanilla JS, no build tools)
+Browser-based clip editor. Flask backend + single-page app: browse local files, preview in an HTML5 player, set start/end on a waveform timeline, and cut. Async via threading, SSE for progress. Output goes to `output/`.
+- `templates/slice.html` — Single HTML template with inline CSS/JS (dark theme, vanilla JS, no build tools). Timeline/trim UI is ported from the `clipmine` project.
+- **Preview windows** (`GET /media/window?path=&idx=`): browsers can't decode HEVC. Rather than transcoding a whole 45-min episode up front, the preview is built as 60s H.264 blocks on demand (NVENC, libx264 fallback), grid-aligned and cached in `.working_copies/windows/`. Opening or seeking anywhere costs ~2s instead of ~60s. Blocks carry 2s of overlap and the next one is prefetched, so playback crosses boundaries without stalling.
+  - `-ss` precedes `-i` in the block build, so block time 0 is **exactly** `idx * WINDOW_SEC` in the source. The frontend adds that offset back (`regionStartMs`) — the timeline always spans the whole file. Verified by frame comparison (38.6 dB PSNR aligned vs 13.8 dB one second off); if you change the build command, re-check this.
+  - Browser-playable files (h264/mp4 etc.) skip all of this and stream the original directly.
+  - **Preview only — cuts always run on the original file at full quality.**
+- `GET /media/wave` — `showwavespic` PNG behind the timeline, cached in `.working_copies/waves/`.
+- `POST /api/snapcuts` — snaps a trim edge to the nearest scene cut (ffmpeg `select='gt(scene,N)'`), landing one frame *inside* the cut to avoid a flash of the neighbouring shot.
+- `POST /api/slice` takes `mode`: `accurate` (default) or `fast`.
 
 ### Download dispatcher
 - `download_video.py` — Regex-based URL detection, dispatches to the appropriate downloader via subprocess

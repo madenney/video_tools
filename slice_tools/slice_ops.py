@@ -1,7 +1,14 @@
 import os
 import tempfile
 
-from slice_tools.ffmpeg_utils import has_audio, probe_duration, probe_video_info, run_cmd
+from slice_tools.ffmpeg_utils import (
+    has_audio,
+    has_nvenc,
+    probe_duration,
+    probe_video_info,
+    run_cmd,
+    run_cmd_with_progress,
+)
 from slice_tools.timecode import format_seconds
 
 
@@ -110,6 +117,101 @@ def build_encoder_args(video_info):
     if pix_fmt:
         args += ["-pix_fmt", pix_fmt]
     return args
+
+
+NVENC_MAP = {"libx264": "h264_nvenc", "libx265": "hevc_nvenc"}
+
+# NVENC rejects some of the pixel formats the CPU encoders accept: it wants the
+# semi-planar form of 10-bit, and it has no notion of the full-range JPEG
+# variants that camera H.264 uses.
+NVENC_PIX_FMT = {
+    "yuv420p10le": "p010le",
+    "yuv444p10le": "p010le",
+    "yuvj420p": "yuv420p",
+    "yuvj422p": "yuv420p",
+    "yuvj444p": "yuv444p",
+}
+
+
+def build_gpu_encoder_args(video_info):
+    """NVENC equivalent of build_encoder_args, or None if the codec has no NVENC
+    encoder (in which case the caller should stay on the CPU)."""
+    codec = video_info.get("codec_name") or ""
+    cpu_encoder = CODEC_MAP.get(codec, "libx264")
+    encoder = NVENC_MAP.get(cpu_encoder)
+    if encoder is None:
+        return None
+
+    args = ["-c:v", encoder, "-preset", "p5"]
+    bitrate = video_info.get("bit_rate")
+    if bitrate:
+        args += ["-b:v", str(bitrate), "-maxrate", str(int(bitrate * 1.5)),
+                 "-bufsize", str(int(bitrate * 2))]
+    else:
+        args += ["-cq", "19"]
+
+    pix_fmt = video_info.get("pix_fmt")
+    if pix_fmt:
+        args += ["-pix_fmt", NVENC_PIX_FMT.get(pix_fmt, pix_fmt)]
+    return args
+
+
+def accurate_cut(input_path, output_path, start_seconds, end_seconds,
+                 video_info=None, prefer_gpu=True, progress_cb=None):
+    """Frame-accurate cut by re-encoding the selected span with an accurate seek.
+
+    ``-ss`` before ``-i`` seeks to the preceding keyframe, then decodes and
+    discards up to the exact start, so the output begins precisely at
+    ``start_seconds`` no matter how sparse the keyframes are. The whole span is
+    re-encoded, which is exact — unlike boundary_slice, whose stream-copied
+    middle snaps to keyframe boundaries and can run a couple of frames long.
+
+    Re-encoding every frame is the expensive part, so try NVENC first and fall
+    back to the CPU encoder if the GPU path fails for any reason (no NVENC, an
+    unsupported pixel format, a busy card).
+    """
+    if video_info is None:
+        video_info = probe_video_info(input_path)
+    duration = max(0.0, end_seconds - start_seconds)
+    audio = has_audio(input_path)
+
+    def build(encoder_args):
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", format_seconds(start_seconds),
+            "-i", input_path,
+            "-t", format_seconds(duration),
+            "-map", "0:v:0",
+        ]
+        if audio:
+            cmd += ["-map", "0:a?"]
+        cmd += encoder_args
+        if audio:
+            cmd += ["-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-map_chapters", "-1", "-avoid_negative_ts", "make_zero", output_path]
+        return cmd
+
+    attempts = []
+    if prefer_gpu and has_nvenc():
+        gpu_args = build_gpu_encoder_args(video_info)
+        if gpu_args:
+            attempts.append(("gpu", build(gpu_args)))
+    attempts.append(("cpu", build(build_encoder_args(video_info))))
+
+    last_err = None
+    for i, (kind, cmd) in enumerate(attempts):
+        try:
+            if progress_cb:
+                run_cmd_with_progress(cmd, duration, progress_cb)
+            else:
+                run_cmd(cmd)
+            return kind
+        except Exception as exc:
+            last_err = exc
+            if i + 1 < len(attempts):
+                print(f"accurate_cut: {kind} path failed ({exc}) — falling back to "
+                      f"{attempts[i + 1][0]}")
+    raise RuntimeError(f"accurate_cut failed: {last_err}")
 
 
 def stream_copy_segment(input_path, output_path, start, end):

@@ -7,18 +7,29 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
 from flask import Flask, jsonify, request, render_template, send_file, Response
 
-from slice_tools.slice_ops import boundary_slice
+from slice_tools.slice_ops import accurate_cut, boundary_slice
 from slice_tools.ffmpeg_utils import probe_video_info, probe_duration, has_audio
 from slice_tools.timecode import parse_timecode
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
 WORKING_DIR = os.path.join(SCRIPT_DIR, ".working_copies")
+WAVE_DIR = os.path.join(WORKING_DIR, "waves")
+WINDOW_DIR = os.path.join(WORKING_DIR, "windows")
 UPLOAD_DIR = os.path.join(SCRIPT_DIR, ".uploads")
+
+# Preview windows: rather than transcoding a whole 45-minute HEVC episode up
+# front (~1 min on GPU) just to play one frame, transcode a short block around
+# wherever the user actually is. Blocks are grid-aligned so they cache and can
+# be prefetched. OVERLAP gives playback a couple of seconds of runway to cross
+# into the next block without a visible gap.
+WINDOW_SEC = 60
+WINDOW_OVERLAP = 2
 LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
 LOG_FILE = os.path.join(LOG_DIR, "slice_ui.log")
 
@@ -75,6 +86,24 @@ def sanitize_timecode_for_filename(tc):
     return tc.replace(":", "-").replace(".", "_")
 
 
+def resolve_output_dir(input_path):
+    """Where a cut of `input_path` should land: next to the source by default.
+
+    Falls back to OUTPUT_DIR when the source sits somewhere a cut has no business
+    going — our own internal caches (a dropped-file copy in .uploads/ isn't where
+    the user thinks their video lives) — or when the directory isn't writable,
+    e.g. a read-only mount or an SD card pulled mid-session.
+    """
+    src_dir = os.path.dirname(os.path.abspath(input_path))
+    internal = (os.path.abspath(UPLOAD_DIR), os.path.abspath(WORKING_DIR))
+    if any(src_dir == d or src_dir.startswith(d + os.sep) for d in internal):
+        return OUTPUT_DIR
+    if not os.access(src_dir, os.W_OK):
+        log.info("OUTPUT %s not writable — falling back to output/", src_dir)
+        return OUTPUT_DIR
+    return src_dir
+
+
 def check_format_status(path, codec):
     """Return 'ready', 'remux', or 'transcode'.
 
@@ -112,17 +141,26 @@ def _parse_ffmpeg_time(value):
         return None
 
 
-def run_ffmpeg_with_progress(cmd, duration, progress_cb):
+class JobCancelled(Exception):
+    """Raised inside a worker when the user cancelled the job."""
+
+
+def run_ffmpeg_with_progress(cmd, duration, progress_cb, proc_cb=None):
     """Run an ffmpeg command, reporting 0-100 progress via progress_cb(pct).
 
     cmd must already include '-progress pipe:1 -nostats'. ffmpeg's normal log
     is merged into the same pipe; we parse out_time lines for progress and keep
     a rolling tail so a non-zero exit can surface a useful error message.
+
+    proc_cb, if given, receives the Popen as soon as it starts so a cancel
+    request from another thread can terminate it.
     """
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )
+    if proc_cb:
+        proc_cb(proc)
     tail = []
     for line in proc.stdout:
         line = line.rstrip("\n")
@@ -192,6 +230,63 @@ def upload_file():
     return jsonify({"path": saved_path})
 
 
+def _locate_roots():
+    """Directories worth searching for a dropped file, cheapest first."""
+    home = os.path.expanduser("~")
+    roots = [
+        os.path.join(home, d)
+        for d in ("Videos", "Downloads", "Desktop", "Movies", "Pictures", "Projects")
+    ]
+    # Removable media / mounts — where camera cards and external drives land.
+    for base in ("/media", "/mnt", "/run/media"):
+        if os.path.isdir(base):
+            for entry in os.listdir(base):
+                roots.append(os.path.join(base, entry))
+    return [r for r in roots if os.path.isdir(r)]
+
+
+@app.route("/api/locate", methods=["POST"])
+def locate_file():
+    """Find a dropped file on disk by name (+ size) so we can load it in place.
+
+    A browser drop exposes only a blob, never a path — but it does give us the
+    filename and byte size. Searching for that beats copying gigabytes through
+    an upload just to learn where the file already lives.
+    """
+    data = request.get_json(force=True)
+    name = os.path.basename(data.get("name", "") or "")
+    size = data.get("size")
+
+    if not name:
+        return jsonify({"error": "No filename"}), 400
+
+    # Roots are ordered cheapest/likeliest first and we return on the first
+    # size-verified hit — walking every mounted drive to completion takes ~8s,
+    # and a name+size match is already the file.
+    # A hit returns in milliseconds; only a genuine miss walks to the deadline,
+    # so keep that short — the user is watching a spinner for it.
+    deadline = time.monotonic() + 6.0
+    for root in _locate_roots():
+        for dirpath, dirnames, filenames in os.walk(root):
+            if time.monotonic() > deadline:
+                log.info("LOCATE timed out: %s", name)
+                return jsonify({"found": False})
+            # Skip hidden trees (.git, .cache, our own .working_copies, ...)
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            if name not in filenames:
+                continue
+            candidate = os.path.join(dirpath, name)
+            try:
+                if size is None or os.path.getsize(candidate) == int(size):
+                    log.info("LOCATE hit: %s -> %s", name, candidate)
+                    return jsonify({"found": True, "path": candidate})
+            except OSError:
+                pass
+
+    log.info("LOCATE miss: %s", name)
+    return jsonify({"found": False})
+
+
 @app.route("/api/prepare", methods=["POST"])
 def prepare_working_copy():
     data = request.get_json(force=True)
@@ -232,11 +327,22 @@ def prepare_working_copy():
             "output_path": working_path,
             "error": None,
             "progress": 0,
+            "cancellable": True,
+            "cancel": False,
+            "proc": None,
         }
 
     def on_progress(pct):
         with jobs_lock:
             jobs[job_id]["progress"] = round(pct)
+
+    def on_proc(proc):
+        with jobs_lock:
+            jobs[job_id]["proc"] = proc
+
+    def cancelled():
+        with jobs_lock:
+            return jobs[job_id]["cancel"]
 
     def worker():
         progress_args = ["-progress", "pipe:1", "-nostats"]
@@ -274,18 +380,26 @@ def prepare_working_copy():
         try:
             last_err = None
             for i, (kind, cmd) in enumerate(attempts):
+                if cancelled():
+                    raise JobCancelled()
                 try:
                     on_progress(0)
-                    run_ffmpeg_with_progress(cmd, duration, on_progress)
+                    run_ffmpeg_with_progress(cmd, duration, on_progress, on_proc)
                     last_err = None
                     if kind == "gpu":
                         log.info("PREPARE [%s] used GPU (NVENC)", job_id)
                     break
                 except Exception as exc:
+                    # A cancel kills ffmpeg, which surfaces here as a generic
+                    # failure. Don't mistake it for a bad encoder and fall back.
+                    if cancelled():
+                        raise JobCancelled()
                     last_err = exc
                     if i + 1 < len(attempts):
                         log.warning("PREPARE [%s] %s path failed (%s) — falling back to %s",
                                     job_id, kind, exc, attempts[i + 1][0])
+            if cancelled():
+                raise JobCancelled()
             if last_err is not None:
                 raise last_err
 
@@ -296,12 +410,26 @@ def prepare_working_copy():
                 jobs[job_id]["message"] = "Ready"
                 jobs[job_id]["progress"] = 100
             log.info("PREPARE [%s] complete -> %s", job_id, os.path.basename(working_path))
+        except JobCancelled:
+            # The half-written proxy is useless and can be gigabytes.
+            try:
+                if os.path.isfile(working_path):
+                    os.remove(working_path)
+            except OSError:
+                pass
+            with jobs_lock:
+                jobs[job_id]["status"] = "cancelled"
+                jobs[job_id]["message"] = "Cancelled"
+            log.info("PREPARE [%s] cancelled by user", job_id)
         except Exception as exc:
             with jobs_lock:
                 jobs[job_id]["status"] = "error"
                 jobs[job_id]["message"] = f"Conversion failed: {exc}"
                 jobs[job_id]["error"] = str(exc)
             log.error("PREPARE [%s] FAILED: %s", job_id, exc)
+        finally:
+            with jobs_lock:
+                jobs[job_id]["proc"] = None
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
@@ -347,12 +475,214 @@ def serve_video():
     return send_file(path, conditional=True)
 
 
+def _window_bounds(idx):
+    """Absolute (start, length) seconds for grid block `idx`."""
+    return idx * WINDOW_SEC, WINDOW_SEC + WINDOW_OVERLAP
+
+
+# One lock per (path, idx) so two players racing for the same block build it once.
+window_locks = {}
+window_locks_guard = threading.Lock()
+
+
+def _window_lock(key):
+    with window_locks_guard:
+        lock = window_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            window_locks[key] = lock
+        return lock
+
+
+def build_window(path, idx):
+    """Transcode one preview block, cached on disk. Returns its path."""
+    os.makedirs(WINDOW_DIR, exist_ok=True)
+    path_hash = hashlib.md5(path.encode()).hexdigest()[:12]
+    out_path = os.path.join(WINDOW_DIR, f"{path_hash}_{idx:05d}.mp4")
+
+    with _window_lock((path, idx)):
+        if os.path.isfile(out_path):
+            return out_path
+
+        start, length = _window_bounds(idx)
+        # -ss BEFORE -i: seek to the preceding keyframe, then decode and discard
+        # up to the exact start. With a re-encode the block begins precisely at
+        # `start`, so proxy time 0 == start and the offset math stays honest.
+        gpu_cmd = [
+            "ffmpeg", "-y", "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+            "-ss", f"{start:.3f}", "-i", path, "-t", f"{length:.3f}",
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale_cuda=w=1280:h=-2:format=yuv420p",
+            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "28",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+            "-movflags", "+faststart", out_path,
+        ]
+        cpu_cmd = [
+            "ffmpeg", "-y",
+            "-ss", f"{start:.3f}", "-i", path, "-t", f"{length:.3f}",
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale='min(1280,iw)':-2",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+            "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+            "-movflags", "+faststart", out_path,
+        ]
+        attempts = [gpu_cmd, cpu_cmd] if HAS_NVENC else [cpu_cmd]
+
+        last_err = None
+        for cmd in attempts:
+            t0 = time.monotonic()
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+                log.info("WINDOW [%s idx=%d] built in %.1fs", os.path.basename(path),
+                         idx, time.monotonic() - t0)
+                return out_path
+            except Exception as exc:
+                last_err = exc
+                if os.path.isfile(out_path):
+                    os.remove(out_path)  # don't cache a half-written block
+        raise RuntimeError(f"window build failed: {last_err}")
+
+
+@app.route("/media/window")
+def serve_window():
+    """Serve one preview block. Built on demand, then cached."""
+    path = request.args.get("path", "")
+    try:
+        idx = int(request.args.get("idx", "0"))
+    except ValueError:
+        return "Bad idx", 400
+    if not path or not os.path.isfile(path) or idx < 0:
+        return "Not found", 404
+
+    try:
+        out_path = build_window(path, idx)
+    except Exception as exc:
+        log.error("WINDOW [%s idx=%d] FAILED: %s", os.path.basename(path), idx, exc)
+        return "Window build failed", 500
+    return send_file(out_path, conditional=True)
+
+
+@app.route("/media/wave")
+def serve_wave():
+    """A waveform PNG for the whole file, drawn behind the timeline.
+
+    Built from the preview proxy when one exists (its audio is already a small
+    stereo AAC track, so decoding is far cheaper than pulling audio out of a
+    multi-track BluRay source). Cached on disk keyed by the source path.
+    """
+    path = request.args.get("path", "")
+    if not path or not os.path.isfile(path):
+        return "Not found", 404
+
+    os.makedirs(WAVE_DIR, exist_ok=True)
+    path_hash = hashlib.md5(path.encode()).hexdigest()[:12]
+    wave_path = os.path.join(WAVE_DIR, f"{path_hash}.png")
+    if os.path.isfile(wave_path):
+        return send_file(wave_path, mimetype="image/png")
+
+    with working_cache_lock:
+        working = working_cache.get(path)
+    source = working if (working and os.path.isfile(working)) else path
+
+    if not has_audio(source):
+        return "No audio", 404
+
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-i", source,
+        "-filter_complex", "showwavespic=s=2000x120:colors=#7aa2f7",
+        "-frames:v", "1", wave_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+    except Exception as exc:
+        log.warning("WAVE failed for %s: %s", os.path.basename(path), exc)
+        return "Waveform failed", 500
+
+    log.info("WAVE built -> %s", os.path.basename(wave_path))
+    return send_file(wave_path, mimetype="image/png")
+
+
+def _scene_cuts(source, start_s, dur_s, thresh=0.3):
+    """Seconds (absolute) of scene changes inside a window of the source."""
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-ss", f"{start_s:.3f}", "-i", source, "-t", f"{dur_s:.3f}",
+        "-vf", f"select='gt(scene,{thresh})',metadata=print:file=-",
+        "-an", "-f", "null", "-",
+    ]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120).stdout
+    except Exception as exc:
+        log.warning("SNAP scene detect failed: %s", exc)
+        return []
+    cuts = []
+    for line in out.splitlines():
+        if "pts_time:" in line:
+            try:
+                cuts.append(start_s + float(line.split("pts_time:")[1].split()[0]))
+            except (ValueError, IndexError):
+                pass
+    return cuts
+
+
+@app.route("/api/snapcuts", methods=["POST"])
+def snap_cuts():
+    """Snap a trim edge to the nearest hard scene cut within +/- WINDOW.
+
+    Start lands one frame *after* the cut and end one frame *before* it, so the
+    slice never includes a frame from the neighbouring shot (the "double-cut
+    flash").
+    """
+    data = request.get_json(force=True)
+    path = data.get("path", "")
+    edge = data.get("edge", "start")
+    try:
+        edge_s = float(data.get("edge_seconds"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "edge_seconds required"}), 400
+
+    if not path or not os.path.isfile(path):
+        return jsonify({"error": "File not found"}), 404
+
+    WINDOW = 0.3  # seconds either side
+    try:
+        info = probe_video_info(path)
+        fps = 30.0
+        rate = info.get("r_frame_rate") or ""
+        if "/" in rate:
+            num, den = rate.split("/")
+            if float(den):
+                fps = float(num) / float(den)
+    except Exception:
+        fps = 30.0
+    frame = 1.0 / fps
+
+    start_s = max(0.0, edge_s - WINDOW)
+    # 0.3 is a hard cut. Softer material (screen caps, dim scenes) never trips it,
+    # so fall back to a looser threshold rather than reporting "no cut" on a cut.
+    cuts = _scene_cuts(path, start_s, WINDOW * 2, thresh=0.3)
+    if not cuts:
+        cuts = _scene_cuts(path, start_s, WINDOW * 2, thresh=0.15)
+    if not cuts:
+        return jsonify({"ok": True, "cut": None})
+
+    nearest = min(cuts, key=lambda c: abs(c - edge_s))
+    snapped = nearest + frame if edge == "start" else max(0.0, nearest - frame)
+    log.info("SNAP [%s] %.3f -> %.3f", edge, edge_s, snapped)
+    return jsonify({"ok": True, "cut": nearest, "seconds": snapped})
+
+
 @app.route("/api/slice", methods=["POST"])
 def start_slice():
     data = request.get_json(force=True)
     input_path = data.get("path", "")
     start_tc = data.get("start", "")
     stop_tc = data.get("stop", "")
+    # "accurate" re-encodes the whole span: exact frame count, slower.
+    # "fast" stream-copies the bulk: quicker, but the cut snaps to keyframes and
+    # can run a couple of frames long.
+    mode = data.get("mode", "accurate")
 
     if not input_path or not os.path.isfile(input_path):
         return jsonify({"error": "Input file not found"}), 404
@@ -376,7 +706,6 @@ def start_slice():
     if end_seconds <= start_seconds:
         return jsonify({"error": "Stop time must be greater than start time"}), 400
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     # Name output after original file; container picked from the source codec.
     basename = os.path.splitext(os.path.basename(input_path))[0]
     start_safe = sanitize_timecode_for_filename(start_tc)
@@ -386,7 +715,10 @@ def start_slice():
         ext = get_output_extension(info.get("codec_name"))
     except Exception:
         ext = ".mp4"
-    output_path = os.path.join(OUTPUT_DIR, f"{basename}_sliced_{start_safe}_{stop_safe}{ext}")
+
+    out_dir = resolve_output_dir(input_path)
+    os.makedirs(out_dir, exist_ok=True)
+    output_path = os.path.join(out_dir, f"{basename}_sliced_{start_safe}_{stop_safe}{ext}")
 
     job_id = str(uuid.uuid4())[:8]
     with jobs_lock:
@@ -395,16 +727,28 @@ def start_slice():
             "message": "Starting slice...",
             "output_path": output_path,
             "error": None,
+            "progress": 0,
         }
-    log.info("SLICE [%s] %s [%s -> %s] -> %s", job_id,
-             os.path.basename(input_path), start_tc, stop_tc,
+    log.info("SLICE [%s] %s mode=%s [%s -> %s] -> %s", job_id,
+             os.path.basename(input_path), mode, start_tc, stop_tc,
              os.path.basename(output_path))
+
+    def on_progress(pct):
+        with jobs_lock:
+            jobs[job_id]["progress"] = round(pct)
 
     def worker():
         try:
             with jobs_lock:
-                jobs[job_id]["message"] = "Slicing video..."
-            boundary_slice(slice_input, output_path, start_seconds, end_seconds)
+                jobs[job_id]["message"] = (
+                    "Cutting (frame-accurate)..." if mode == "accurate" else "Cutting (fast)..."
+                )
+            if mode == "fast":
+                boundary_slice(slice_input, output_path, start_seconds, end_seconds)
+            else:
+                used = accurate_cut(slice_input, output_path, start_seconds,
+                                    end_seconds, progress_cb=on_progress)
+                log.info("SLICE [%s] encoded on %s", job_id, used.upper())
             with jobs_lock:
                 jobs[job_id]["status"] = "complete"
                 jobs[job_id]["message"] = "Complete"
@@ -433,7 +777,32 @@ def job_status(job_id):
         "message": job["message"],
         "error": job["error"],
         "progress": job.get("progress"),
+        "output_path": job.get("output_path"),
     })
+
+
+@app.route("/api/job/<job_id>/cancel", methods=["POST"])
+def cancel_job(job_id):
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+        if not job.get("cancellable"):
+            return jsonify({"error": "This job can't be cancelled"}), 409
+        if job["status"] != "running":
+            return jsonify({"status": job["status"]})
+        job["cancel"] = True
+        job["message"] = "Cancelling..."
+        proc = job.get("proc")
+
+    log.info("CANCEL [%s] requested", job_id)
+    if proc and proc.poll() is None:
+        proc.terminate()  # ffmpeg shuts down cleanly on SIGTERM
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    return jsonify({"status": "cancelling"})
 
 
 @app.route("/api/job/<job_id>/stream")
@@ -448,11 +817,12 @@ def job_stream(job_id):
                 yield f"data: {__import__('json').dumps({'status': 'error', 'message': 'Job not found'})}\n\n"
                 break
             msg = {"status": job["status"], "message": job["message"],
-                   "error": job["error"], "progress": job.get("progress")}
+                   "error": job["error"], "progress": job.get("progress"),
+                   "output_path": job.get("output_path")}
             if msg != last_msg:
                 yield f"data: {__import__('json').dumps(msg)}\n\n"
                 last_msg = msg
-            if job["status"] in ("complete", "error"):
+            if job["status"] in ("complete", "error", "cancelled"):
                 break
             time.sleep(0.5)
 

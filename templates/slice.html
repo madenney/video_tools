@@ -5,227 +5,186 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Video Slice Tool</title>
 <style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e222e; --line: #2a2f3d;
+    --fg: #e6e8ee; --muted: #8a90a2; --accent: #7aa2f7;
+    --good: #54d18c; --bad: #f7768e; --handle: #ffd479;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #1a1a1a; color: #e0e0e0;
+    background: var(--bg); color: var(--fg);
     height: 100vh; overflow: hidden;
   }
+
+  button {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    padding: 7px 14px; border-radius: 6px; cursor: pointer; font-size: 0.9em;
+  }
+  button:hover:not(:disabled) { background: #262b3a; border-color: #3a4158; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0f1117; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #93b5f9; }
 
   /* Drop overlay */
   #dropOverlay {
     display: none; position: fixed; inset: 0; z-index: 100;
-    background: rgba(42, 110, 216, 0.15);
-    border: 3px dashed #4a8ef5;
+    background: rgba(122, 162, 247, 0.12);
+    border: 3px dashed var(--accent);
     justify-content: center; align-items: center;
-    font-size: 1.6em; color: #7ab8f5;
+    font-size: 1.6em; color: var(--accent);
   }
   #dropOverlay.visible { display: flex; }
 
   /* Landing */
-  #landing {
-    height: 100vh; display: flex;
-    justify-content: center; align-items: center;
-  }
+  #landing { height: 100vh; display: flex; justify-content: center; align-items: center; }
   .landing-content { text-align: center; }
   .landing-icon { font-size: 4em; margin-bottom: 16px; opacity: 0.4; }
-  .landing-text { font-size: 1.2em; color: #888; margin-bottom: 6px; }
-  .landing-or { color: #555; margin-bottom: 12px; }
+  .landing-text { font-size: 1.2em; color: var(--muted); margin-bottom: 6px; }
+  .landing-or { color: #555c70; margin-bottom: 12px; }
   .recents {
     margin-top: 28px; text-align: left;
-    width: 360px; max-width: 80vw; margin-left: auto; margin-right: auto;
+    width: 380px; max-width: 80vw; margin-left: auto; margin-right: auto;
   }
   .recents-title {
     font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.08em;
-    color: #666; margin-bottom: 8px; padding-left: 4px;
+    color: var(--muted); margin-bottom: 8px; padding-left: 4px;
   }
-  .recents ul { list-style: none; margin: 0; padding: 0; }
+  .recents ul { list-style: none; }
   .recent-item {
     display: flex; align-items: center; gap: 8px;
-    padding: 7px 10px; border-radius: 5px; background: #161616;
-    border: 1px solid #262626; margin-bottom: 5px;
+    padding: 7px 10px; border-radius: 6px; background: var(--panel);
+    border: 1px solid var(--line); margin-bottom: 5px;
   }
-  .recent-item:hover { background: #1d2733; border-color: #2f5e9e; }
+  .recent-item:hover { background: var(--panel2); border-color: var(--accent); }
   .recent-name {
-    flex: 1; cursor: pointer; color: #cfcfcf;
+    flex: 1; cursor: pointer; color: #cfd3de;
     font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .recent-del {
     flex-shrink: 0; padding: 0; width: 22px; height: 22px; line-height: 1;
-    font-size: 1.1em; background: transparent; color: #777;
+    font-size: 1.1em; background: transparent; color: var(--muted);
     border: none; border-radius: 4px; cursor: pointer;
   }
-  .recent-del:hover { background: #3d1e1e; color: #f57a7a; }
+  .recent-del:hover { background: #3d1e26; color: var(--bad); }
 
-  button {
-    background: #3a3a3a; color: #e0e0e0; border: 1px solid #555;
-    padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.9em;
-  }
-  button:hover { background: #4a4a4a; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.primary { background: #2a6ed8; border-color: #2a6ed8; color: #fff; }
-  button.primary:hover { background: #3a7ee8; }
-  button.primary:disabled { background: #2a4a78; border-color: #2a4a78; }
+  /* Main */
+  #main { height: 100vh; display: flex; flex-direction: column; padding: 10px 16px 14px; gap: 8px; }
 
-  /* Main UI */
-  #main {
-    height: 100vh; display: flex; flex-direction: column;
-    padding: 10px 16px 16px;
-  }
-
-  /* Header */
-  .header {
-    display: flex; align-items: center; gap: 12px;
-    padding-bottom: 8px; flex-shrink: 0;
-  }
+  .header { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
   .header .filename {
-    font-family: monospace; font-size: 0.95em; color: #aaa;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    flex: 1;
+    font-family: monospace; font-size: 0.95em; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
   }
+  .header .meta { font-family: monospace; font-size: 0.8em; color: #5c637a; flex-shrink: 0; }
   .header button { font-size: 0.8em; padding: 4px 12px; flex-shrink: 0; }
 
   /* Video */
   .video-wrap {
-    flex: 1; min-height: 0; display: flex;
+    flex: 1; min-height: 0; position: relative; display: flex;
     align-items: center; justify-content: center;
-    background: #000; border-radius: 6px; overflow: hidden;
+    background: #000; border-radius: 8px; overflow: hidden; border: 1px solid var(--line);
   }
   video { width: 100%; height: 100%; object-fit: contain; }
-  .video-error {
-    color: #666; font-size: 1.1em;
-  }
-  .video-wrap { position: relative; }
+  .video-error { color: var(--muted); font-size: 1.05em; padding: 0 20px; text-align: center; }
   .spinner-overlay {
     position: absolute; inset: 0; z-index: 5;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 14px; background: rgba(0, 0, 0, 0.55);
+    gap: 14px; background: rgba(0, 0, 0, 0.6);
   }
   .spinner-ring {
     width: 48px; height: 48px; border-radius: 50%;
-    border: 4px solid #333; border-top-color: #6a9ef5;
+    border: 4px solid var(--line); border-top-color: var(--accent);
     animation: spin 0.8s linear infinite;
   }
-  .spinner-label { color: #ccc; font-size: 0.9em; }
+  .spinner-label { color: #ccd1dd; font-size: 0.9em; }
   .spinner-bar {
-    width: 240px; max-width: 60%; height: 6px;
-    background: #333; border-radius: 3px; overflow: hidden;
+    width: 260px; max-width: 60%; height: 6px;
+    background: var(--line); border-radius: 3px; overflow: hidden;
   }
-  .spinner-bar-fill {
-    height: 100%; width: 0%; background: #6a9ef5;
-    transition: width 0.3s ease;
-  }
+  .spinner-bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
+  .spinner-cancel { font-size: 0.85em; padding: 5px 14px; }
+  .spinner-cancel:hover:not(:disabled) { background: #3d1e26; border-color: var(--bad); color: var(--bad); }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Controls below video */
-  .controls { flex-shrink: 0; padding-top: 8px; }
+  /* --- Timeline (ported from clipmine) --- */
+  #tl {
+    position: relative; height: 88px; background: var(--panel2);
+    border-radius: 8px; overflow: hidden; user-select: none;
+    border: 1px solid var(--line); flex-shrink: 0; cursor: crosshair;
+  }
+  #tl .wave {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: fill; opacity: 0.5; pointer-events: none;
+  }
+  #tl .sel {
+    position: absolute; top: 0; bottom: 0;
+    background: rgba(122, 162, 247, 0.16);
+    border-left: 2px solid var(--handle); border-right: 2px solid var(--handle);
+  }
+  #tl .handle {
+    position: absolute; top: 0; bottom: 0; width: 10px; margin-left: -5px;
+    cursor: ew-resize; background: var(--handle); opacity: 0.85; border-radius: 3px;
+  }
+  #tl .handle::after {
+    content: ''; position: absolute; top: 50%; left: 3px; width: 4px; height: 24px;
+    margin-top: -12px; background: #0008; border-radius: 2px;
+  }
+  #tl .play { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; }
 
-  /* Scrubber */
-  .scrub-wrap { position: relative; height: 18px; display: flex; align-items: center; }
-  .scrub-track {
-    position: absolute; left: 0; right: 0; height: 8px;
-    background: #333; border-radius: 4px; pointer-events: none;
+  /* Nudge bar */
+  #nudgebar {
+    display: flex; align-items: center; justify-content: center; gap: 22px;
+    flex-shrink: 0; flex-wrap: wrap;
   }
-  .range-fill {
-    position: absolute; height: 8px; background: #2f5e9e;
-    border-radius: 4px; pointer-events: none; display: none; z-index: 1;
-  }
-  .playhead {
-    position: absolute; top: -5px; width: 2px; height: 28px;
-    background: #fff; z-index: 4; pointer-events: none;
-    box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); display: none;
-  }
-  .marker {
-    position: absolute; top: -6px; width: 14px; height: 30px;
-    border-radius: 4px; z-index: 3; display: none;
-    cursor: ew-resize; pointer-events: auto; touch-action: none;
-    border: 1px solid rgba(0, 0, 0, 0.6);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
-  }
-  .marker::after {  /* grip line */
-    content: ''; position: absolute; left: 50%; top: 7px; bottom: 7px;
-    width: 2px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.55);
-  }
-  .marker.start { background: #62e562; }
-  .marker.stop { background: #f59362; }
-  .marker.dragging { box-shadow: 0 0 8px 2px #6a9ef5; }
-  input[type="range"] {
-    -webkit-appearance: none; width: 100%; height: 8px;
-    background: transparent; border-radius: 4px; outline: none; cursor: pointer;
-    position: relative; z-index: 2;
-  }
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 18px; height: 18px;
-    background: #6a9ef5; border-radius: 50%; cursor: pointer;
-  }
-  input[type="range"]::-moz-range-thumb {
-    width: 18px; height: 18px; background: #6a9ef5;
-    border-radius: 50%; cursor: pointer; border: none;
-  }
-  input[type="range"]::-moz-range-track {
-    background: transparent; height: 8px; border-radius: 4px;
-  }
+  .nudgegrp { display: flex; align-items: center; gap: 6px; }
+  .nudgegrp button { padding: 4px 9px; font-size: 0.8em; font-family: monospace; }
+  .nlbl { font-size: 0.8em; color: var(--muted); font-family: monospace; }
+  .nlbl b { color: var(--handle); font-weight: 600; }
+  .snap-btn { font-size: 0.78em !important; padding: 4px 10px !important; }
+  .snap-btn:hover:not(:disabled) { border-color: var(--handle); color: var(--handle); }
 
-  /* Transport row */
+  /* Transport */
   .transport {
-    display: flex; align-items: center; justify-content: center;
-    gap: 4px; margin-top: 8px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-shrink: 0; flex-wrap: wrap;
   }
-  .transport button {
-    font-family: monospace; font-size: 0.8em;
-    padding: 5px 8px; min-width: 38px;
-  }
-  .time-display {
-    font-family: monospace; font-size: 1em; color: #ccc;
-    min-width: 180px; text-align: center;
-    padding: 0 8px;
-  }
-  .meta {
-    text-align: center; font-family: monospace;
-    font-size: 0.8em; color: #666; margin-top: 4px;
-  }
+  .transport button { font-size: 0.85em; padding: 6px 12px; }
+  .transport .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+  .tc-readout { font-family: monospace; font-size: 0.95em; color: #ccd1dd; min-width: 96px; text-align: center; }
+  .len-readout { font-family: monospace; font-size: 0.9em; color: var(--good); min-width: 62px; text-align: center; }
+  .loop-toggle { display: flex; align-items: center; gap: 5px; font-size: 0.82em; color: var(--muted); cursor: pointer; }
 
-  /* Slice controls */
-  .slice-controls {
-    flex-shrink: 0; padding-top: 10px;
-    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  }
-  .tc-group {
-    display: flex; align-items: center; gap: 6px;
-  }
-  .tc-group label { font-size: 0.85em; color: #888; }
-  .tc-group input[type="text"] {
-    width: 100px; background: #111; border: 1px solid #444;
-    color: #e0e0e0; padding: 6px 8px; border-radius: 4px;
-    font-family: monospace; font-size: 0.9em; text-align: center;
-  }
-  .tc-group input[type="text"]:focus { outline: none; border-color: #6a9ef5; }
-  .tc-group button { font-size: 0.78em; padding: 6px 8px; }
-  .set-btn { font-weight: 600; color: #111; border: none; }
-  .set-btn.start { background: #62e562; }
-  .set-btn.start:hover { background: #7af57a; }
-  .set-btn.stop { background: #f59362; }
-  .set-btn.stop:hover { background: #f5a07a; }
-
+  /* Bottom bar */
+  .bottom { display: flex; align-items: center; justify-content: center; gap: 12px; flex-shrink: 0; flex-wrap: wrap; }
   .status {
-    font-size: 0.85em; padding: 6px 10px; border-radius: 4px; display: none;
+    font-size: 0.85em; padding: 6px 10px; border-radius: 6px; display: none;
+    max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .status.visible { display: inline-block; }
-  .status.running { background: #1e2d3d; color: #7ab8f5; }
-  .status.complete { background: #1e3d1e; color: #7af57a; }
-  .status.error { background: #3d1e1e; color: #f57a7a; }
-
+  .status.running { background: #1b2436; color: var(--accent); }
+  .status.complete { background: #16301f; color: var(--good); }
+  .status.error { background: #331b22; color: var(--bad); }
   .download-link {
-    display: inline-block; padding: 6px 14px;
-    background: #2a6ed8; color: #fff; text-decoration: none;
-    border-radius: 4px; font-size: 0.85em;
+    display: inline-block; padding: 6px 14px; background: var(--good);
+    color: #0f1117; text-decoration: none; border-radius: 6px;
+    font-size: 0.85em; font-weight: 600;
   }
-  .download-link:hover { background: #3a7ee8; }
+  .hint { font-size: 0.75em; color: #4e5468; font-family: monospace; text-align: center; }
+
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    padding: 9px 16px; border-radius: 6px; font-size: 0.85em; z-index: 200;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  #toast.show { opacity: 1; }
 </style>
 </head>
 <body>
 
 <div id="dropOverlay">Drop video file here</div>
+<div id="toast"></div>
 
 <div id="landing">
   <div class="landing-content">
@@ -243,111 +202,355 @@
 <div id="main" style="display:none">
   <div class="header">
     <span class="filename" id="fileName"></span>
+    <span class="meta" id="videoMeta"></span>
     <button onclick="showLanding()">Change</button>
   </div>
 
   <div class="video-wrap">
-    <video id="player"></video>
-    <div class="video-error" id="videoError" style="display:none">Preview unavailable for this codec</div>
+    <video id="player" preload="auto"></video>
+    <div class="video-error" id="videoError" style="display:none"></div>
     <div class="spinner-overlay" id="spinner" style="display:none">
       <div class="spinner-ring"></div>
       <div class="spinner-label" id="spinnerLabel">Loading video&hellip;</div>
-      <div class="spinner-bar" id="spinnerBar" style="display:none">
-        <div class="spinner-bar-fill" id="spinnerBarFill"></div>
-      </div>
     </div>
   </div>
 
-  <div class="controls">
-    <div class="scrub-wrap">
-      <div class="scrub-track"></div>
-      <div class="range-fill" id="rangeFill"></div>
-      <input type="range" id="scrubber" min="0" max="100" step="any" value="0">
-      <div class="playhead" id="playhead"></div>
-      <div class="marker start" id="markStart" title="Start"></div>
-      <div class="marker stop" id="markStop" title="Stop"></div>
-    </div>
-    <div class="transport">
-      <button id="playBtn" onclick="togglePlay()" title="Play / pause (Space)">&#9654; Play</button>
-      <button onclick="stepFrame(-1)" title="Previous frame">&lt;1f</button>
-      <span class="time-display" id="timeDisplay">0:00.0 / 0:00</span>
-      <button onclick="stepFrame(1)" title="Next frame">1f&gt;</button>
-      <button id="playSelBtn" onclick="playSelection()" title="Play only the selected range">&#9654; Selection</button>
-    </div>
-    <div class="meta" id="videoMeta"></div>
+  <div id="tl">
+    <img class="wave" id="wave" alt="">
+    <div class="sel" id="sel"></div>
+    <div class="handle" id="hIn"></div>
+    <div class="handle" id="hOut"></div>
+    <div class="play" id="play"></div>
   </div>
 
-  <div class="slice-controls">
-    <div class="tc-group">
-      <label>Start:</label>
-      <input type="text" id="startTC" placeholder="0:00">
-      <button class="set-btn start" onclick="useCurrentTime('start')" title="Set start to the current playhead position">⇤ Start here</button>
+  <div id="nudgebar">
+    <div class="nudgegrp">
+      <span class="nlbl">START <b id="tcIn">0:00.000</b></span>
+      <button id="inMinus" title="Nudge start back one frame">&#9664;</button>
+      <button id="inPlus" title="Nudge start forward one frame">&#9654;</button>
+      <button class="snap-btn" id="snapStart" title="Snap start to the nearest scene cut">&#9986; snap</button>
     </div>
-    <div class="tc-group">
-      <label>Stop:</label>
-      <input type="text" id="stopTC" placeholder="1:00">
-      <button class="set-btn stop" onclick="useCurrentTime('stop')" title="Set end to the current playhead position">End here ⇥</button>
+    <span class="nlbl" id="fpsTag"></span>
+    <div class="nudgegrp">
+      <button class="snap-btn" id="snapEnd" title="Snap end to the nearest scene cut">&#9986; snap</button>
+      <button id="outMinus" title="Nudge end back one frame">&#9664;</button>
+      <button id="outPlus" title="Nudge end forward one frame">&#9654;</button>
+      <span class="nlbl">END <b id="tcOut">0:00.000</b></span>
     </div>
-    <button class="primary" id="sliceBtn" onclick="startSlice()">Slice</button>
+  </div>
+
+  <div class="transport">
+    <button id="playBtn" title="Play / pause (Space)">&#9654; Play</button>
+    <button id="frmB" title="Previous frame (&larr;)">&#9664; 1f</button>
+    <span class="tc-readout" id="tcNow">0:00.000</span>
+    <button id="frmF" title="Next frame (&rarr;)">1f &#9654;</button>
+    <div class="sep"></div>
+    <button id="setIn" title="Set start to the playhead (I)">&#8676; Set start</button>
+    <span class="len-readout" id="tcLen">0.0s</span>
+    <button id="setOut" title="Set end to the playhead (O)">Set end &#8677;</button>
+    <div class="sep"></div>
+    <label class="loop-toggle" title="Loop playback inside the selection">
+      <input type="checkbox" id="loopChk" checked> loop selection
+    </label>
+    <button id="playSelBtn" title="Play the selection from its start">&#9654; Selection</button>
+  </div>
+
+  <div class="bottom">
+    <button class="primary" id="sliceBtn" onclick="startSlice()">&#9986; Cut (Enter)</button>
+    <label class="loop-toggle" title="Fast mode stream-copies the middle of the clip: quicker, but the cut snaps to a keyframe and can run a couple of frames long.">
+      <input type="checkbox" id="fastChk"> fast cut (not frame-exact)
+    </label>
     <span class="status" id="statusBox"></span>
     <span id="downloadArea"></span>
   </div>
+  <div class="hint">space play/pause &middot; &larr;/&rarr; frame &middot; J/K/L shuttle &middot; I/O set start/end &middot; Enter cut</div>
 </div>
 
 <script>
-  const player = document.getElementById('player');
-  const videoError = document.getElementById('videoError');
-  const scrubber = document.getElementById('scrubber');
-  const playBtn = document.getElementById('playBtn');
-  const timeDisplay = document.getElementById('timeDisplay');
-  const statusBox = document.getElementById('statusBox');
-  const downloadArea = document.getElementById('downloadArea');
-  const sliceBtn = document.getElementById('sliceBtn');
-  const startTCEl = document.getElementById('startTC');
-  const stopTCEl = document.getElementById('stopTC');
-  const markStart = document.getElementById('markStart');
-  const markStop = document.getElementById('markStop');
-  const rangeFill = document.getElementById('rangeFill');
-  const spinner = document.getElementById('spinner');
-  const spinnerLabel = document.getElementById('spinnerLabel');
-  const spinnerBar = document.getElementById('spinnerBar');
-  const spinnerBarFill = document.getElementById('spinnerBarFill');
-  let spinnerBase = 'Loading video…';
+  const $ = s => document.querySelector(s);
+  const player = $('#player');
+  const videoError = $('#videoError');
+  const statusBox = $('#statusBox');
+  const downloadArea = $('#downloadArea');
+  const sliceBtn = $('#sliceBtn');
+  const playBtn = $('#playBtn');
+  const spinner = $('#spinner');
+  const spinnerLabel = $('#spinnerLabel');
 
+  // --- Edit state (milliseconds, like clipmine) ---
+  let selectedFile = '';
+  let durMs = 0;        // full clip length
+  let inMs = 0;         // trim start
+  let outMs = 0;        // trim end
+  let fps = 30;
+  let eventSource = null;
+  const MIN_SEL_MS = 100;
+
+  function frameMs() { return 1000 / (fps || 30); }
+
+  // --- Preview windows ---
+  // A browser-playable file streams straight from disk. Anything else (HEVC) is
+  // previewed through short transcoded blocks built on demand — so opening a
+  // 45-minute episode costs about a second instead of transcoding all 45 minutes
+  // up front. The timeline always spans the WHOLE file either way; only what's
+  // loaded into the <video> element differs.
+  const WINDOW_SEC = 60;
+  let windowed = false;     // previewing via blocks?
+  let winIdx = -1;          // block currently loaded
+  let regionStartMs = 0;    // absolute time of that block's first frame
+  const prefetched = new Set();
+
+  function msToFrac(ms) { return durMs > 0 ? Math.max(0, Math.min(1, ms / durMs)) : 0; }
+  function fracToMs(f) { return Math.round(Math.max(0, Math.min(1, f)) * durMs); }
+
+  // Position in the FILE, not in the loaded block.
+  function vidMs() { return regionStartMs + (player.currentTime || 0) * 1000; }
+
+  function seekToMs(ms) {
+    ms = Math.max(0, durMs > 0 ? Math.min(ms, durMs) : ms);
+    if (!windowed) { requestSeek(ms / 1000); return; }
+    const idx = Math.floor(ms / (WINDOW_SEC * 1000));
+    if (idx === winIdx) { requestSeek((ms - regionStartMs) / 1000); return; }
+    loadWindow(idx, ms);
+  }
+
+  function loadWindow(idx, seekMs, keepPlaying) {
+    const wasPlaying = keepPlaying !== undefined ? keepPlaying : !player.paused;
+    winIdx = idx;
+    regionStartMs = idx * WINDOW_SEC * 1000;
+    pendingSeek = null; seekInFlight = false;
+    showSpinner('Building preview&hellip;');
+    player.src = '/media/window?path=' + encodeURIComponent(selectedFile) + '&idx=' + idx;
+    player.addEventListener('loadeddata', () => {
+      hideSpinner();
+      if (seekMs != null) {
+        player.currentTime = Math.max(0, (seekMs - regionStartMs) / 1000);
+      }
+      if (wasPlaying) player.play();
+      if (idx === 0 && !seekMs) skipLeadingBlack();
+      prefetchWindow(idx + 1);
+    }, { once: true });
+  }
+
+  // Warm the next block server-side without downloading it, so playback crosses
+  // the boundary without stalling on a transcode.
+  function prefetchWindow(idx) {
+    if (!windowed || idx < 0 || idx * WINDOW_SEC * 1000 >= durMs) return;
+    const key = selectedFile + '#' + idx;
+    if (prefetched.has(key)) return;
+    prefetched.add(key);
+    fetch('/media/window?path=' + encodeURIComponent(selectedFile) + '&idx=' + idx,
+          { method: 'HEAD' }).catch(() => {});
+  }
+
+  // Playback ran off the end of the block — roll into the next one. Blocks carry
+  // a couple of seconds of overlap, which is the runway this needs.
+  player.addEventListener('timeupdate', () => {
+    if (!windowed || player.paused) return;
+    if (player.currentTime >= WINDOW_SEC) {
+      loadWindow(winIdx + 1, regionStartMs + player.currentTime * 1000, true);
+    } else if (player.currentTime > WINDOW_SEC * 0.6) {
+      prefetchWindow(winIdx + 1);
+    }
+  });
+
+  // --- Toast ---
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // --- Spinner ---
+  // No progress bar any more: preview blocks build in ~1s, so there's nothing
+  // long-running left to report a percentage for.
   function showSpinner(label) {
     spinnerLabel.innerHTML = label || 'Loading video&hellip;';
-    spinnerBase = spinnerLabel.textContent;  // decoded (handles &hellip;)
-    spinnerBar.style.display = 'none';        // indeterminate until progress arrives
-    spinnerBarFill.style.width = '0%';
     spinner.style.display = 'flex';
-  }
-  function setSpinnerProgress(pct) {
-    pct = Math.max(0, Math.min(100, Math.round(pct)));
-    spinner.style.display = 'flex';
-    spinnerBar.style.display = 'block';
-    spinnerBarFill.style.width = pct + '%';
-    spinnerLabel.textContent = spinnerBase + ' ' + pct + '%';
   }
   function hideSpinner() { spinner.style.display = 'none'; }
 
-  let selectedFile = '';
-  let videoDuration = 0;
-  let frameDuration = 1 / 30;
-  let isScrubbing = false;
-  let eventSource = null;
+  // ============ TIMELINE ============
+  // Positions are pixels off #tl's measured width, so draw() must re-run on resize.
+  function draw() {
+    if (durMs <= 0) return;
+    const w = $('#tl').clientWidth;
+    const xi = msToFrac(inMs) * w, xo = msToFrac(outMs) * w;
+    $('#hIn').style.left = xi + 'px';
+    $('#hOut').style.left = xo + 'px';
+    $('#sel').style.left = xi + 'px';
+    $('#sel').style.width = Math.max(0, xo - xi) + 'px';
+    $('#play').style.left = msToFrac(vidMs()) * w + 'px';
+    $('#tcIn').textContent = fmt(inMs);
+    $('#tcOut').textContent = fmt(outMs);
+    $('#tcNow').textContent = fmt(vidMs());
+    $('#tcLen').textContent = ((outMs - inMs) / 1000).toFixed(1) + 's';
+  }
 
-  // --- Drop handling ---
-  let dragCounter = 0;
-  const dropOverlay = document.getElementById('dropOverlay');
+  function loop() {
+    if (durMs > 0) {
+      // Loop playback inside the selection so you can study the cut you just made.
+      if (!player.paused && $('#loopChk').checked && vidMs() > outMs) seekToMs(inMs);
+      draw();
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  window.addEventListener('resize', draw);
 
-  document.addEventListener('dragenter', e => {
-    e.preventDefault();
-    dragCounter++;
-    dropOverlay.classList.add('visible');
+  // --- Handle drag + click-to-seek ---
+  let drag = null;
+  function tlX(e) {
+    const r = $('#tl').getBoundingClientRect();
+    return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  }
+  $('#hIn').addEventListener('mousedown', e => { drag = 'in'; e.preventDefault(); });
+  $('#hOut').addEventListener('mousedown', e => { drag = 'out'; e.preventDefault(); });
+  $('#tl').addEventListener('mousedown', e => {
+    if (drag || e.target.classList.contains('handle')) return;
+    seekToMs(fracToMs(tlX(e)));  // click anywhere to move the playhead
   });
+  document.addEventListener('mousemove', e => {
+    if (!drag || durMs <= 0) return;
+    const ms = fracToMs(tlX(e));
+    if (drag === 'in') inMs = Math.min(ms, outMs - MIN_SEL_MS);
+    else outMs = Math.max(ms, inMs + MIN_SEL_MS);
+    draw();
+  });
+  document.addEventListener('mouseup', () => {
+    if (!drag) return;
+    seekToMs(drag === 'in' ? inMs : outMs);  // preview the frame you just landed on
+    drag = null;
+  });
+
+  // Coalesced seeking: while a seek is in flight keep only the latest target and
+  // issue it once the current one lands. Stops a drag from flooding the player
+  // with dozens of range requests a second.
+  let pendingSeek = null, seekInFlight = false;
+  function requestSeek(t) { pendingSeek = t; if (!seekInFlight) flushSeek(); }
+  function flushSeek() {
+    if (pendingSeek == null) return;
+    seekInFlight = true;
+    const t = pendingSeek;
+    pendingSeek = null;
+    player.currentTime = t;
+  }
+  player.addEventListener('seeked', () => {
+    seekInFlight = false;
+    if (pendingSeek != null) flushSeek();
+  });
+
+  // --- Transport ---
+  function togglePlay() {
+    if (player.paused) {
+      if ($('#loopChk').checked && vidMs() >= outMs) seekToMs(inMs);
+      player.play();
+    } else {
+      player.pause();
+    }
+  }
+  player.addEventListener('play', () => { playBtn.innerHTML = '&#9646;&#9646; Pause'; });
+  player.addEventListener('pause', () => { playBtn.innerHTML = '&#9654; Play'; });
+  playBtn.onclick = togglePlay;
+
+  $('#frmB').onclick = () => stepFrame(-1);
+  $('#frmF').onclick = () => stepFrame(1);
+  function stepFrame(dir) {
+    player.pause();
+    seekToMs(Math.max(0, Math.min(vidMs() + dir * frameMs(), durMs)));
+  }
+
+  $('#playSelBtn').onclick = () => { seekToMs(inMs); player.play(); };
+
+  // --- Set / nudge in & out ---
+  $('#setIn').onclick = () => {
+    inMs = Math.min(Math.round(vidMs()), outMs - MIN_SEL_MS);
+    draw();
+  };
+  $('#setOut').onclick = () => {
+    outMs = Math.max(Math.round(vidMs()), inMs + MIN_SEL_MS);
+    draw();
+  };
+  function nudgeIn(dir) {
+    inMs = Math.max(0, Math.min(Math.round(inMs + dir * frameMs()), outMs - MIN_SEL_MS));
+    player.pause(); seekToMs(inMs); draw();
+  }
+  function nudgeOut(dir) {
+    outMs = Math.max(inMs + MIN_SEL_MS, Math.min(Math.round(outMs + dir * frameMs()), durMs));
+    player.pause(); seekToMs(outMs); draw();
+  }
+  $('#inMinus').onclick = () => nudgeIn(-1);
+  $('#inPlus').onclick = () => nudgeIn(1);
+  $('#outMinus').onclick = () => nudgeOut(-1);
+  $('#outPlus').onclick = () => nudgeOut(1);
+
+  // --- Snap an edge to the nearest hard scene cut ---
+  async function snapEdge(edge) {
+    if (!selectedFile) return;
+    const btn = edge === 'start' ? $('#snapStart') : $('#snapEnd');
+    const orig = btn.innerHTML;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await fetch('/api/snapcuts', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: selectedFile, edge: edge,
+          edge_seconds: (edge === 'start' ? inMs : outMs) / 1000,
+        })
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'failed');
+      if (j.cut == null) {
+        toast('No hard cut near the ' + (edge === 'start' ? 'start' : 'end'));
+      } else {
+        const ms = Math.round(j.seconds * 1000);
+        const d = ms - (edge === 'start' ? inMs : outMs);
+        if (edge === 'start') inMs = Math.min(ms, outMs - MIN_SEL_MS);
+        else outMs = Math.max(ms, inMs + MIN_SEL_MS);
+        player.pause();
+        seekToMs(edge === 'start' ? inMs : outMs);
+        draw();
+        toast((edge === 'start' ? 'Start' : 'End') + ' snapped to cut (' + (d >= 0 ? '+' : '') + d + 'ms)');
+      }
+    } catch (e) {
+      toast('Snap failed: ' + e.message);
+    }
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+  $('#snapStart').onclick = () => snapEdge('start');
+  $('#snapEnd').onclick = () => snapEdge('end');
+
+  // --- Keyboard (clipmine's shortcut map) ---
+  document.addEventListener('keydown', e => {
+    if (!selectedFile || ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    switch (e.key.toLowerCase()) {
+      case ' ': e.preventDefault(); togglePlay(); break;
+      case 'arrowleft': e.preventDefault(); stepFrame(-1); break;
+      case 'arrowright': e.preventDefault(); stepFrame(1); break;
+      case 'j':
+        player.playbackRate = Math.max(0.25, (player.playbackRate || 1) / 2);
+        if (player.paused) player.play();
+        toast('rate ' + player.playbackRate + '×'); break;
+      case 'k': player.pause(); player.playbackRate = 1; break;
+      case 'l':
+        player.playbackRate = Math.min(8, player.paused ? 1 : (player.playbackRate || 1) * 2);
+        if (player.paused) player.play();
+        toast('rate ' + player.playbackRate + '×'); break;
+      case 'i': $('#setIn').click(); break;
+      case 'o': $('#setOut').click(); break;
+      case 'enter': startSlice(); break;
+    }
+  });
+
+  // ============ FILE LOADING ============
+  let dragCounter = 0;
+  const dropOverlay = $('#dropOverlay');
+  document.addEventListener('dragenter', e => { e.preventDefault(); dragCounter++; dropOverlay.classList.add('visible'); });
   document.addEventListener('dragleave', e => {
-    e.preventDefault();
-    dragCounter--;
+    e.preventDefault(); dragCounter--;
     if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('visible'); }
   });
   document.addEventListener('dragover', e => e.preventDefault());
@@ -356,7 +559,6 @@
     dragCounter = 0;
     dropOverlay.classList.remove('visible');
 
-    // Try text/uri-list (Linux file manager drag)
     const uriList = e.dataTransfer.getData('text/uri-list');
     if (uriList) {
       const line = uriList.split(/\r?\n/).find(l => l && !l.startsWith('#'));
@@ -365,77 +567,89 @@
         return;
       }
     }
-    // Try text/plain
     const text = (e.dataTransfer.getData('text/plain') || '').trim();
     if (text.startsWith('file://')) {
       loadVideo(decodeURIComponent(text.split(/\r?\n/)[0].trim().slice(7)));
       return;
     }
-    if (text.startsWith('/')) {
-      loadVideo(text.split(/\r?\n/)[0].trim());
-      return;
-    }
-    // Fallback: browser exposed the file only as a blob (no path).
+    if (text.startsWith('/')) { loadVideo(text.split(/\r?\n/)[0].trim()); return; }
+
+    // The browser exposed the file only as a blob (no path). Don't upload yet —
+    // the file is already on this machine, so ask the server to find it by
+    // name+size and load it in place. Uploading is the last resort.
     const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (file) {
-      // Dropping copies the whole file to the server. For large files that's
-      // gigabytes of needless duplication — steer to the native picker, which
-      // loads by real path with zero copy.
-      const LARGE_BYTES = 250 * 1024 * 1024;
-      if (file.size > LARGE_BYTES) {
-        alert('"' + file.name + '" is ' + Math.round(file.size / 1e6) + ' MB.\n\n' +
-          'Dropping would copy the whole file to the server. Use the Open File ' +
-          'picker instead to load it in place (no copy).');
-        openFile();
-        return;
-      }
-      uploadFile(file);
-      return;
-    }
-    alert('Could not read dropped file (types: ' +
-      (Array.from(e.dataTransfer.types || []).join(', ') || 'none') +
-      '). Try the Open File button.');
+    if (file) { handleBlobDrop(file); return; }
+
+    alert('Could not read dropped file. Try the Open File button.');
   });
 
+  async function handleBlobDrop(file) {
+    $('#landing').style.display = 'none';
+    $('#main').style.display = '';
+    $('#fileName').textContent = file.name;
+    showSpinner('Locating ' + file.name + '&hellip;');
+
+    try {
+      const res = await fetch('/api/locate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: file.name, size: file.size })
+      });
+      const data = await res.json();
+      if (data.found) {
+        hideSpinner();
+        loadVideo(data.path);   // zero copy — it's the real file on disk
+        return;
+      }
+    } catch (err) { /* fall through to the copy path */ }
+
+    hideSpinner();
+
+    // Not found on disk (network share, weird mount). Copying is the only way
+    // left, so make the cost explicit before duplicating gigabytes.
+    const LARGE_BYTES = 250 * 1024 * 1024;
+    if (file.size > LARGE_BYTES) {
+      const mb = Math.round(file.size / 1e6);
+      const ok = confirm('Could not find "' + file.name + '" on disk.\n\n' +
+        'The only way to load it now is to copy all ' + mb + ' MB to the server. ' +
+        'That duplicates the file.\n\n' +
+        'OK to copy it, or Cancel to use the Open File picker instead (no copy).');
+      if (!ok) { showLanding(); openFile(); return; }
+    }
+    uploadFile(file);
+  }
+
   async function uploadFile(file) {
-    document.getElementById('fileName').textContent = 'Uploading ' + file.name + '...';
+    $('#fileName').textContent = 'Uploading ' + file.name + '...';
     const fd = new FormData();
     fd.append('file', file, file.name);
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: fd });
       const data = await res.json();
-      if (data.path) {
-        loadVideo(data.path);
-      } else {
-        alert(data.error || 'Upload failed');
-      }
+      if (data.path) loadVideo(data.path);
+      else alert(data.error || 'Upload failed');
     } catch (err) {
       alert('Upload failed: ' + err);
     }
   }
 
-  // --- File picker ---
   async function openFile() {
     try {
       const res = await fetch('/api/pick');
       const data = await res.json();
-      if (data.path) {
-        loadVideo(data.path);
-      } else if (data.error === 'no_picker') {
+      if (data.path) loadVideo(data.path);
+      else if (data.error === 'no_picker') {
         const path = prompt('Enter video file path:');
         if (path) loadVideo(path.trim());
-      } else if (data.error !== 'cancelled') {
-        alert(data.error);
-      }
+      } else if (data.error !== 'cancelled') alert(data.error);
     } catch (err) {
       alert('Failed to open file picker: ' + err);
     }
   }
 
-  // --- Recent clips (persisted in localStorage) ---
+  // --- Recents (localStorage) ---
   const RECENTS_KEY = 'sliceUI:recents';
   const RECENTS_MAX = 12;
-
   function getRecents() {
     try { return JSON.parse(localStorage.getItem(RECENTS_KEY)) || []; }
     catch (e) { return []; }
@@ -444,9 +658,8 @@
     try { localStorage.setItem(RECENTS_KEY, JSON.stringify(list)); } catch (e) {}
   }
   function addRecent(path) {
-    const name = path.split('/').pop();
     let list = getRecents().filter(r => r.path !== path);
-    list.unshift({ path: path, name: name });
+    list.unshift({ path: path, name: path.split('/').pop() });
     saveRecents(list.slice(0, RECENTS_MAX));
     renderRecents();
   }
@@ -456,8 +669,8 @@
   }
   function renderRecents() {
     const list = getRecents();
-    const wrap = document.getElementById('recents');
-    const ul = document.getElementById('recentList');
+    const wrap = $('#recents');
+    const ul = $('#recentList');
     ul.innerHTML = '';
     if (!list.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = '';
@@ -481,31 +694,34 @@
   }
 
   function showLanding() {
-    document.getElementById('main').style.display = 'none';
-    document.getElementById('landing').style.display = '';
+    $('#main').style.display = 'none';
+    $('#landing').style.display = '';
     if (eventSource) { eventSource.close(); eventSource = null; }
     player.removeAttribute('src');
+    selectedFile = '';
+    durMs = 0;
     renderRecents();
   }
 
-  // --- Load video ---
   function loadVideo(path) {
     selectedFile = path;
     addRecent(path);
-    document.getElementById('fileName').textContent = path.split('/').pop();
-    document.getElementById('landing').style.display = 'none';
-    document.getElementById('main').style.display = '';
+    $('#fileName').textContent = path.split('/').pop();
+    $('#landing').style.display = 'none';
+    $('#main').style.display = '';
     showSpinner('Loading video&hellip;');
 
-    // Reset
     statusBox.className = 'status';
     downloadArea.innerHTML = '';
     player.removeAttribute('src');
     player.style.display = '';
     videoError.style.display = 'none';
+    $('#wave').removeAttribute('src');
+    durMs = 0; inMs = 0; outMs = 0;
+    windowed = false; winIdx = -1; regionStartMs = 0;
+    prefetched.clear();
     if (eventSource) { eventSource.close(); eventSource = null; }
 
-    // Probe first, then decide how to load
     fetch('/api/probe?path=' + encodeURIComponent(path))
       .then(r => r.json())
       .then(info => {
@@ -517,11 +733,8 @@
           return;
         }
         showMeta(info);
-        if (info.playable) {
-          setVideoSrc(path);
-        } else {
-          prepareWorkingCopy(path, info.format_status);
-        }
+        if (info.playable) setVideoSrc(path);
+        else startWindowed(path);
       })
       .catch(err => {
         hideSpinner();
@@ -534,25 +747,24 @@
   function showMeta(info) {
     const parts = [];
     if (info.codec_name) parts.push(info.codec_name);
-    if (info.width && info.height) parts.push(info.width + '\u00d7' + info.height);
+    if (info.width && info.height) parts.push(info.width + '×' + info.height);
     if (info.r_frame_rate) {
       const [num, den] = info.r_frame_rate.split('/');
-      if (den && den !== '0') {
-        const fps = Math.round(num / den);
-        parts.push(fps + 'fps');
-        frameDuration = 1 / (num / den);
+      if (den && +den !== 0) {
+        fps = num / den;
+        parts.push(Math.round(fps) + 'fps');
+        $('#fpsTag').textContent = fps.toFixed(fps % 1 ? 2 : 0) + ' fps';
       }
     }
     if (info.duration) {
-      videoDuration = info.duration;
-      parts.push(formatTime(info.duration));
-      // Default the trim range to the whole clip.
-      startTCEl.value = formatTimecode(0);
-      stopTCEl.value = formatTimecode(info.duration);
-      updateMarkers();
+      durMs = info.duration * 1000;
+      parts.push(fmtShort(durMs));
+      inMs = 0;              // default selection: the whole clip
+      outMs = Math.round(durMs);
+      draw();
     }
     if (info.has_audio) parts.push('audio');
-    document.getElementById('videoMeta').textContent = parts.join(' \u00b7 ');
+    $('#videoMeta').textContent = parts.join(' · ');
   }
 
   function setVideoSrc(path) {
@@ -565,20 +777,45 @@
       videoError.textContent = 'Preview unavailable for this codec';
       videoError.style.display = '';
     };
+    // The waveform is built on demand server-side; it can lag the video by a few
+    // seconds on a long file, so load it separately and let it fade in.
+    const wave = $('#wave');
+    wave.onerror = () => { wave.removeAttribute('src'); };
+    wave.src = '/media/wave?path=' + encodeURIComponent(path);
     player.addEventListener('loadeddata', () => skipLeadingBlack(), { once: true });
   }
 
-  // Many videos open on several seconds of black (fades, title cards). Sitting
-  // on a black frame at 0:00 looks broken, so sample frames from the start and
-  // advance the playhead to the first one with real picture. Bounded so it
-  // never wanders far or seeks forever. Does NOT move the start trim marker.
+  // Codec the browser can't decode: preview it through on-demand blocks instead
+  // of transcoding the entire file first. Cuts still run on the original.
+  function startWindowed(path) {
+    windowed = true;
+    winIdx = -1;
+    regionStartMs = 0;
+    prefetched.clear();
+    statusBox.className = 'status';
+    videoError.style.display = 'none';
+    player.style.display = '';
+    player.onerror = () => {
+      hideSpinner();
+      player.style.display = 'none';
+      videoError.textContent = 'Could not build a preview for this file.';
+      videoError.style.display = '';
+    };
+    const wave = $('#wave');
+    wave.onerror = () => { wave.removeAttribute('src'); };
+    wave.src = '/media/wave?path=' + encodeURIComponent(path);
+    loadWindow(0, 0, false);
+  }
+
+  // Many videos open on several seconds of black (fades, title cards). Sitting on
+  // a black frame at 0:00 looks broken, so sample frames from the start and move
+  // the playhead to the first with real picture. Does NOT move the start handle.
   function skipLeadingBlack() {
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 36;
     const ctx = canvas.getContext('2d');
     const MAX_T = 15, STEP = 0.5, LUMA_MIN = 18;
     let t = 0;
-
     function meanLuma() {
       try {
         ctx.drawImage(player, 0, 0, canvas.width, canvas.height);
@@ -589,12 +826,12 @@
         }
         return sum / (d.length / 4);
       } catch (e) {
-        return null;  // unreadable — bail out, leave playhead alone
+        return null;  // unreadable — bail out, leave the playhead alone
       }
     }
     function step() {
       const luma = meanLuma();
-      if (luma === null || luma >= LUMA_MIN || t >= MAX_T) return;  // found picture / gave up
+      if (luma === null || luma >= LUMA_MIN || t >= MAX_T) return;
       t += STEP;
       player.addEventListener('seeked', step, { once: true });
       player.currentTime = t;
@@ -602,290 +839,57 @@
     if (player.paused) step();
   }
 
-  function prepareWorkingCopy(path, formatStatus) {
-    const label = formatStatus === 'remux' ? 'Remuxing to MP4...' : 'Building H.264 preview…';
-    statusBox.className = 'status visible running';
-    statusBox.textContent = label;
-    showSpinner(label);
-
-    fetch('/api/prepare', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({path: path})
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.status === 'ready') {
-        statusBox.className = 'status';
-        setVideoSrc(path);
-      } else if (data.job_id) {
-        listenToPrepare(data.job_id, path);
-      } else if (data.error) {
-        hideSpinner();
-        statusBox.className = 'status visible error';
-        statusBox.textContent = data.error;
-      }
-    })
-    .catch(err => {
-      hideSpinner();
-      statusBox.className = 'status visible error';
-      statusBox.textContent = 'Conversion failed: ' + err;
-    });
-  }
-
-  function listenToPrepare(jobId, path) {
-    const es = new EventSource('/api/job/' + jobId + '/stream');
-    es.onmessage = function(e) {
-      const data = JSON.parse(e.data);
-      statusBox.textContent = data.message;
-      if (data.status === 'running' && typeof data.progress === 'number') {
-        setSpinnerProgress(data.progress);
-      }
-      if (data.status === 'complete') {
-        statusBox.className = 'status';
-        setVideoSrc(path);
-        es.close();
-      } else if (data.status === 'error') {
-        hideSpinner();
-        statusBox.className = 'status visible error';
-        es.close();
-      }
-    };
-    es.onerror = function() {
-      es.close();
-      statusBox.className = 'status';
-      setVideoSrc(path);
-    };
-  }
-
-  // --- Scrubber ---
-  const playhead = document.getElementById('playhead');
-  function updatePlayhead() {
-    if (videoDuration <= 0) { playhead.style.display = 'none'; return; }
-    const f = Math.max(0, Math.min(1, player.currentTime / videoDuration));
-    playhead.style.display = 'block';
-    playhead.style.left = `calc(9px + (100% - 18px) * ${f} - 1px)`;
-  }
-
   player.addEventListener('loadedmetadata', () => {
-    scrubber.max = player.duration || 100;
-    videoDuration = player.duration;
-    updateMarkers();
-    updatePlayhead();
+    // In windowed mode player.duration is the length of one 60s BLOCK, not the
+    // file — taking it as the duration would collapse the whole timeline.
+    if (!windowed && player.duration && isFinite(player.duration)) {
+      // Trust the decoded length over the probe when they disagree, but keep the
+      // selection end pinned to the clip end if it was never moved.
+      const wasFullClip = Math.abs(outMs - durMs) < 1;
+      durMs = player.duration * 1000;
+      if (wasFullClip) outMs = Math.round(durMs);
+      outMs = Math.min(outMs, Math.round(durMs));
+    }
+    draw();
   });
-  // Hide the spinner once enough has buffered to start playback.
   player.addEventListener('canplay', hideSpinner);
   player.addEventListener('loadeddata', hideSpinner);
-  // Re-show it if playback stalls waiting on the buffer (long/seeking videos).
   player.addEventListener('waiting', () => showSpinner('Buffering&hellip;'));
   player.addEventListener('playing', hideSpinner);
-  player.addEventListener('timeupdate', () => {
-    if (!isScrubbing) scrubber.value = player.currentTime;
-    updateTimeDisplay();
-    updatePlayhead();
-    // Stop at the end of the selection when "Play selection" is active.
-    if (playingSelection) {
-      const e = parseTC(stopTCEl.value) ?? videoDuration;
-      if (player.currentTime >= e) { player.pause(); playingSelection = false; }
-    }
-  });
-  player.addEventListener('seeked', updatePlayhead);
 
-  scrubber.addEventListener('mousedown', () => isScrubbing = true);
-  scrubber.addEventListener('touchstart', () => isScrubbing = true);
-  // Click/drag anywhere on the bar: move the playhead there. If the video was
-  // playing it keeps playing from the new spot; if paused it stays put.
-  scrubber.addEventListener('input', () => {
-    playingSelection = false;
-    player.currentTime = parseFloat(scrubber.value);
-    updateTimeDisplay();
-    updatePlayhead();
-  });
-  document.addEventListener('mouseup', () => { isScrubbing = false; });
-  document.addEventListener('touchend', () => { isScrubbing = false; });
-
-  function updateTimeDisplay() {
-    timeDisplay.textContent = formatTime(player.currentTime) + ' / ' + formatTime(videoDuration);
-  }
-
-  // --- Play / Pause ---
-  function togglePlay() {
-    playingSelection = false;  // a plain play is not a selection play
-    if (player.paused) player.play();
-    else player.pause();
-  }
-  player.addEventListener('pause', () => { playBtn.innerHTML = '&#9654; Play'; });
-  player.addEventListener('play', () => { playBtn.innerHTML = '&#9646;&#9646; Pause'; });
-
-  // --- Play selection (just the start→end range, then stop) ---
-  let playingSelection = false;
-  function playSelection() {
-    const s = parseTC(startTCEl.value) ?? 0;
-    const e = parseTC(stopTCEl.value) ?? videoDuration;
-    if (e <= s) return;
-    if (playingSelection && !player.paused) {  // toggle off
-      player.pause();
-      playingSelection = false;
-      return;
-    }
-    // Jump to the start of the selection (or current spot if already inside it).
-    if (player.currentTime < s || player.currentTime >= e) player.currentTime = s;
-    playingSelection = true;
-    player.play();
-  }
-
-  // --- Stepping ---
-  function step(seconds) {
-    player.pause();
-    player.currentTime = Math.max(0, Math.min(player.currentTime + seconds, videoDuration));
-  }
-  function stepFrame(dir) {
-    player.pause();
-    player.currentTime = Math.max(0, Math.min(player.currentTime + dir * frameDuration, videoDuration));
-  }
-
-  // Spacebar play/pause
-  document.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT') return;
-    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-  });
-
-  // --- Timecodes ---
-  function useCurrentTime(which) {
-    const tc = formatTimecode(player.currentTime);
-    if (which === 'start') startTCEl.value = tc;
-    else stopTCEl.value = tc;
-    updateMarkers();
-  }
-
-  // Parse "ss(.s)", "mm:ss", or "hh:mm:ss" -> seconds (null if blank/invalid)
-  function parseTC(str) {
-    str = (str || '').trim();
-    if (!str) return null;
-    const parts = str.split(':').map(Number);
-    if (parts.some(isNaN)) return null;
-    let sec;
-    if (parts.length === 1) sec = parts[0];
-    else if (parts.length === 2) sec = parts[0] * 60 + parts[1];
-    else if (parts.length === 3) sec = parts[0] * 3600 + parts[1] * 60 + parts[2];
-    else return null;
-    return sec;
-  }
-
-  // Position the start/stop markers (and the highlighted range) on the scrub bar.
-  // The thumb center travels from 9px to width-9px, so we offset by the 9px radius.
-  function setMarker(el, sec) {
-    if (sec == null || videoDuration <= 0) {
-      el.style.display = 'none';
-      return;
-    }
-    // Clamp into range so a marker never disappears when its timecode is a hair
-    // past the player's reported duration (probe vs decoded length can differ).
-    const f = Math.max(0, Math.min(1, sec / videoDuration));
-    el.style.display = 'block';
-    el.style.left = `calc(9px + (100% - 18px) * ${f} - 7px)`;
-  }
-  function updateMarkers() {
-    const s = parseTC(startTCEl.value);
-    const e = parseTC(stopTCEl.value);
-    setMarker(markStart, s);
-    setMarker(markStop, e);
-    if (videoDuration > 0 && s != null && e != null && e > s) {
-      const fs = Math.max(0, Math.min(1, s / videoDuration));
-      const fe = Math.max(0, Math.min(1, e / videoDuration));
-      rangeFill.style.display = 'block';
-      rangeFill.style.left = `calc(9px + (100% - 18px) * ${fs})`;
-      rangeFill.style.width = `calc((100% - 18px) * ${fe - fs})`;
-    } else {
-      rangeFill.style.display = 'none';
-    }
-  }
-  startTCEl.addEventListener('input', updateMarkers);
-  stopTCEl.addEventListener('input', updateMarkers);
-
-  // --- Draggable trim handles ---
-  const scrubWrap = document.querySelector('.scrub-wrap');
-  let dragHandle = null;  // 'start' | 'stop'
-
-  // Map a clientX over the scrub bar to a time in seconds (clamped to clip).
-  function xToSeconds(clientX) {
-    const rect = scrubWrap.getBoundingClientRect();
-    const usable = rect.width - 18;  // thumb radius (9px) on each side
-    let f = usable > 0 ? (clientX - rect.left - 9) / usable : 0;
-    f = Math.max(0, Math.min(1, f));
-    return f * videoDuration;
-  }
-
-  function beginDrag(which, el, e) {
-    if (videoDuration <= 0) return;
-    dragHandle = which;
-    el.classList.add('dragging');
-    el.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  }
-  function onHandleMove(e) {
-    if (!dragHandle) return;
-    let sec = xToSeconds(e.clientX);
-    const startSec = parseTC(startTCEl.value) ?? 0;
-    const stopSec = parseTC(stopTCEl.value) ?? videoDuration;
-    if (dragHandle === 'start') {
-      sec = Math.min(sec, stopSec);
-      startTCEl.value = formatTimecode(sec);
-    } else {
-      sec = Math.max(sec, startSec);
-      stopTCEl.value = formatTimecode(sec);
-    }
-    requestSeek(sec);  // preview the boundary frame (throttled)
-    updateMarkers();
-  }
-  function endDrag() {
-    if (!dragHandle) return;
-    markStart.classList.remove('dragging');
-    markStop.classList.remove('dragging');
-    dragHandle = null;
-  }
-  markStart.addEventListener('pointerdown', e => beginDrag('start', markStart, e));
-  markStop.addEventListener('pointerdown', e => beginDrag('stop', markStop, e));
-  document.addEventListener('pointermove', onHandleMove);
-  document.addEventListener('pointerup', endDrag);
-
-  // Coalesced seeking: while a seek is in flight, keep only the latest target
-  // and issue it when the current one finishes. Stops drag-seeks from flooding
-  // the player with dozens of range requests per second.
-  let pendingSeek = null, seekInFlight = false;
-  function requestSeek(t) {
-    pendingSeek = t;
-    if (!seekInFlight) flushSeek();
-  }
-  function flushSeek() {
-    if (pendingSeek == null) return;
-    seekInFlight = true;
-    const t = pendingSeek;
-    pendingSeek = null;
-    player.currentTime = t;
-  }
-  player.addEventListener('seeked', () => {
-    seekInFlight = false;
-    if (pendingSeek != null) flushSeek();
-  });
-
-  // --- Slice ---
+  // ============ CUT ============
   function startSlice() {
-    if (!selectedFile) return;
-    const start = document.getElementById('startTC').value.trim();
-    const stop = document.getElementById('stopTC').value.trim();
-    if (!start || !stop) { alert('Set both start and stop times'); return; }
+    if (!selectedFile || durMs <= 0) return;
+    if (outMs - inMs < MIN_SEL_MS) { toast('Selection is too short'); return; }
+
+    // Accurate mode re-encodes every frame in the selection. The default
+    // selection is the WHOLE file, so it's easy to kick off a 15-minute encode
+    // by accident when you meant to grab a 10-second clip.
+    const selSec = (outMs - inMs) / 1000;
+    if (!$('#fastChk').checked && selSec > 120) {
+      const mins = (selSec / 60).toFixed(1);
+      const ok = confirm('Your selection is ' + mins + ' minutes long.\n\n' +
+        'A frame-accurate cut re-encodes every frame, so this will take a while. ' +
+        'Drag the handles in if you meant to cut a shorter clip.\n\n' +
+        'OK to cut all ' + mins + ' minutes.');
+      if (!ok) return;
+    }
 
     sliceBtn.disabled = true;
     statusBox.className = 'status visible running';
-    statusBox.textContent = 'Starting...';
+    statusBox.textContent = 'Cutting…';
     downloadArea.innerHTML = '';
     if (eventSource) { eventSource.close(); eventSource = null; }
 
     fetch('/api/slice', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({path: selectedFile, start: start, stop: stop})
+      body: JSON.stringify({
+        path: selectedFile,
+        start: tcForApi(inMs),
+        stop: tcForApi(outMs),
+        mode: $('#fastChk').checked ? 'fast' : 'accurate',
+      })
     })
     .then(r => r.json())
     .then(data => {
@@ -906,51 +910,79 @@
 
   function listenToJob(jobId) {
     eventSource = new EventSource('/api/job/' + jobId + '/stream');
-    eventSource.onmessage = function(e) {
-      const data = JSON.parse(e.data);
+    const finish = (data) => {
       statusBox.textContent = data.message;
       if (data.status === 'complete') {
         statusBox.className = 'status visible complete';
+        if (data.output_path) {
+          statusBox.textContent = 'Saved to ' + data.output_path;
+          statusBox.title = data.output_path;
+        }
         downloadArea.innerHTML = '<a class="download-link" href="/api/job/' + jobId + '/download">Download</a>';
-        sliceBtn.disabled = false;
-        eventSource.close(); eventSource = null;
+        toast('Cut ' + ((outMs - inMs) / 1000).toFixed(1) + 's clip');
       } else if (data.status === 'error') {
         statusBox.className = 'status visible error';
-        sliceBtn.disabled = false;
+      }
+      sliceBtn.disabled = false;
+    };
+    eventSource.onmessage = function(e) {
+      const data = JSON.parse(e.data);
+      statusBox.textContent = data.message;
+      if (data.status === 'running' && typeof data.progress === 'number') {
+        statusBox.textContent = data.message + ' ' + data.progress + '%';
+      }
+      if (data.status === 'complete' || data.status === 'error') {
+        finish(data);
         eventSource.close(); eventSource = null;
       }
     };
     eventSource.onerror = function() {
       eventSource.close(); eventSource = null;
-      fetch('/api/job/' + jobId).then(r => r.json()).then(data => {
-        statusBox.textContent = data.message;
-        if (data.status === 'complete') {
-          statusBox.className = 'status visible complete';
-          downloadArea.innerHTML = '<a class="download-link" href="/api/job/' + jobId + '/download">Download</a>';
-        } else if (data.status === 'error') {
+      // The stream dropped — maybe the job finished, maybe the server went away.
+      // Ask once. If even that fails, still re-enable the button: leaving it
+      // disabled strands the page with no way back.
+      fetch('/api/job/' + jobId)
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.status) finish(data);
+          else throw new Error(data && data.error ? data.error : 'lost the job');
+        })
+        .catch(err => {
           statusBox.className = 'status visible error';
-        }
-        sliceBtn.disabled = false;
-      });
+          statusBox.textContent = 'Lost contact with the job (' + err.message +
+                                  '). It may still be running — check the output folder.';
+          sliceBtn.disabled = false;
+        });
     };
   }
 
-  // --- Formatting ---
-  function formatTime(sec) {
-    if (!sec || isNaN(sec)) return '0:00';
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
+  // ============ FORMATTING ============
+  // Display: m:ss.mmm (frame-level detail is the whole point of the nudge buttons).
+  function fmt(ms) {
+    if (!ms || isNaN(ms)) ms = 0;
+    const total = ms / 1000;
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const sStr = (s < 10 ? '0' : '') + s.toFixed(3);
+    return (h > 0 ? h + ':' + String(m).padStart(2, '0') : m) + ':' + sStr;
+  }
+  function fmtShort(ms) {
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
     if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
     return m + ':' + String(s).padStart(2, '0');
   }
-  function formatTimecode(sec) {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = sec % 60;
-    const sStr = s < 10 ? '0' + s.toFixed(1) : s.toFixed(1);
-    if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + sStr;
-    return m + ':' + sStr;
+  // Millisecond precision for the API — rounding to 0.1s here would throw away
+  // the frame accuracy the nudge buttons exist to give you.
+  function tcForApi(ms) {
+    const total = ms / 1000;
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h + ':' + String(m).padStart(2, '0') + ':' + (s < 10 ? '0' : '') + s.toFixed(3);
   }
 
   // --- Startup: restore recents, auto-load the most recent clip if it survives ---
@@ -962,11 +994,8 @@
     fetch('/api/probe?path=' + encodeURIComponent(last.path))
       .then(r => r.json())
       .then(info => {
-        if (info && !info.error) {
-          loadVideo(last.path);
-        } else {
-          removeRecent(last.path);  // file moved/deleted — drop it, stay on landing
-        }
+        if (info && !info.error) loadVideo(last.path);
+        else removeRecent(last.path);  // file moved/deleted — drop it, stay on landing
       })
       .catch(() => {});
   })();
