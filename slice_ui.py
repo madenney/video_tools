@@ -73,13 +73,9 @@ BROWSER_CONTAINERS = {".mp4", ".m4v", ".webm", ".mov"}
 
 app = Flask(__name__, template_folder=os.path.join(SCRIPT_DIR, "templates"))
 
-# In-memory job store: job_id -> {status, message, output_path, error}
+# In-memory job store: job_id -> {status, message, output_path, error, progress}
 jobs = {}
 jobs_lock = threading.Lock()
-
-# Working copy cache: original_path -> working_copy_path
-working_cache = {}
-working_cache_lock = threading.Lock()
 
 
 def sanitize_timecode_for_filename(tc):
@@ -105,23 +101,17 @@ def resolve_output_dir(input_path):
 
 
 def check_format_status(path, codec):
-    """Return 'ready', 'remux', or 'transcode'.
+    """Return 'ready' if the browser can play the file as-is, else 'windowed'.
 
-    'ready'     — file is already browser-playable and sliceable as-is.
-    'remux'     — codec is good, just needs repackaging into mp4/webm (fast, lossless).
-    'transcode' — exotic codec, needs full conversion to h264 mp4.
+    'ready'    — stream the original straight to the player.
+    'windowed' — the browser can't decode or demux this, so preview it through
+                 on-demand blocks (see /media/window).
     """
     ext = os.path.splitext(path)[1].lower()
     codec = (codec or "").lower()
-    with working_cache_lock:
-        cached = working_cache.get(path)
-    if cached and os.path.isfile(cached):
-        return "ready"
     if codec in BROWSER_CODECS and ext in BROWSER_CONTAINERS:
         return "ready"
-    if codec in BROWSER_CODECS:
-        return "remux"
-    return "transcode"
+    return "windowed"
 
 
 def get_output_extension(codec):
@@ -130,53 +120,6 @@ def get_output_extension(codec):
     if codec in ("vp8", "vp9"):
         return ".webm"
     return ".mp4"
-
-
-def _parse_ffmpeg_time(value):
-    """Parse an ffmpeg '-progress' out_time (HH:MM:SS.micro) to seconds."""
-    try:
-        h, m, s = value.split(":")
-        return int(h) * 3600 + int(m) * 60 + float(s)
-    except (ValueError, AttributeError):
-        return None
-
-
-class JobCancelled(Exception):
-    """Raised inside a worker when the user cancelled the job."""
-
-
-def run_ffmpeg_with_progress(cmd, duration, progress_cb, proc_cb=None):
-    """Run an ffmpeg command, reporting 0-100 progress via progress_cb(pct).
-
-    cmd must already include '-progress pipe:1 -nostats'. ffmpeg's normal log
-    is merged into the same pipe; we parse out_time lines for progress and keep
-    a rolling tail so a non-zero exit can surface a useful error message.
-
-    proc_cb, if given, receives the Popen as soon as it starts so a cancel
-    request from another thread can terminate it.
-    """
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
-    )
-    if proc_cb:
-        proc_cb(proc)
-    tail = []
-    for line in proc.stdout:
-        line = line.rstrip("\n")
-        if line:
-            tail.append(line)
-            if len(tail) > 40:
-                tail.pop(0)
-        if duration and line.startswith("out_time="):
-            secs = _parse_ffmpeg_time(line.split("=", 1)[1])
-            if secs is not None:
-                progress_cb(max(0.0, min(100.0, secs / duration * 100)))
-    proc.wait()
-    if proc.returncode != 0:
-        msg = next((l for l in reversed(tail) if "=" not in l and l.strip()),
-                   "ffmpeg failed")
-        raise RuntimeError(msg)
 
 
 @app.route("/")
@@ -287,156 +230,6 @@ def locate_file():
     return jsonify({"found": False})
 
 
-@app.route("/api/prepare", methods=["POST"])
-def prepare_working_copy():
-    data = request.get_json(force=True)
-    path = data.get("path", "")
-
-    if not path or not os.path.isfile(path):
-        return jsonify({"error": "File not found"}), 404
-
-    with working_cache_lock:
-        cached = working_cache.get(path)
-    if cached and os.path.isfile(cached):
-        return jsonify({"status": "ready"})
-
-    try:
-        info = probe_video_info(path)
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
-
-    codec = (info.get("codec_name") or "").lower()
-    status = check_format_status(path, codec)
-    if status == "ready":
-        return jsonify({"status": "ready"})
-
-    os.makedirs(WORKING_DIR, exist_ok=True)
-    path_hash = hashlib.md5(path.encode()).hexdigest()[:12]
-    basename = os.path.splitext(os.path.basename(path))[0]
-    working_path = os.path.join(WORKING_DIR, f"{basename}_{path_hash}.mp4")
-
-    is_remux = status == "remux"
-    job_id = str(uuid.uuid4())[:8]
-    log.info("PREPARE [%s] %s codec=%s -> %s", job_id,
-             "remux" if is_remux else "transcode", codec, os.path.basename(path))
-    duration = probe_duration(path)
-    with jobs_lock:
-        jobs[job_id] = {
-            "status": "running",
-            "message": "Remuxing..." if is_remux else "Building H.264 preview...",
-            "output_path": working_path,
-            "error": None,
-            "progress": 0,
-            "cancellable": True,
-            "cancel": False,
-            "proc": None,
-        }
-
-    def on_progress(pct):
-        with jobs_lock:
-            jobs[job_id]["progress"] = round(pct)
-
-    def on_proc(proc):
-        with jobs_lock:
-            jobs[job_id]["proc"] = proc
-
-    def cancelled():
-        with jobs_lock:
-            return jobs[job_id]["cancel"]
-
-    def worker():
-        progress_args = ["-progress", "pipe:1", "-nostats"]
-        # Preview proxy only — fast, scaled to <=1280 wide. The real slice runs on
-        # the original file at full quality, so this only has to play in a browser.
-        # GPU pipeline (NVENC) is ~15x faster on real HEVC; CPU is the fallback.
-        # Only the first audio track, downmixed to stereo: BluRay rips carry
-        # several multichannel tracks and re-encoding them all dominates the
-        # runtime (≈3x slower) for a preview that needs just one stereo track.
-        gpu_cmd = [
-            "ffmpeg", "-y", "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
-            "-i", path, "-map", "0:v:0", "-map", "0:a:0?",
-            "-vf", "scale_cuda=w=1280:h=-2:format=yuv420p",
-            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "28",
-            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart",
-        ] + progress_args + [working_path]
-        cpu_cmd = [
-            "ffmpeg", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a:0?",
-            "-vf", "scale='min(1280,iw)':-2",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-            "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart",
-        ] + progress_args + [working_path]
-        remux_cmd = [
-            "ffmpeg", "-y", "-i", path,
-            "-c", "copy", "-movflags", "+faststart",
-        ] + progress_args + [working_path]
-
-        if is_remux:
-            attempts = [("remux", remux_cmd)]
-        elif HAS_NVENC:
-            attempts = [("gpu", gpu_cmd), ("cpu", cpu_cmd)]
-        else:
-            attempts = [("cpu", cpu_cmd)]
-
-        try:
-            last_err = None
-            for i, (kind, cmd) in enumerate(attempts):
-                if cancelled():
-                    raise JobCancelled()
-                try:
-                    on_progress(0)
-                    run_ffmpeg_with_progress(cmd, duration, on_progress, on_proc)
-                    last_err = None
-                    if kind == "gpu":
-                        log.info("PREPARE [%s] used GPU (NVENC)", job_id)
-                    break
-                except Exception as exc:
-                    # A cancel kills ffmpeg, which surfaces here as a generic
-                    # failure. Don't mistake it for a bad encoder and fall back.
-                    if cancelled():
-                        raise JobCancelled()
-                    last_err = exc
-                    if i + 1 < len(attempts):
-                        log.warning("PREPARE [%s] %s path failed (%s) — falling back to %s",
-                                    job_id, kind, exc, attempts[i + 1][0])
-            if cancelled():
-                raise JobCancelled()
-            if last_err is not None:
-                raise last_err
-
-            with working_cache_lock:
-                working_cache[path] = working_path
-            with jobs_lock:
-                jobs[job_id]["status"] = "complete"
-                jobs[job_id]["message"] = "Ready"
-                jobs[job_id]["progress"] = 100
-            log.info("PREPARE [%s] complete -> %s", job_id, os.path.basename(working_path))
-        except JobCancelled:
-            # The half-written proxy is useless and can be gigabytes.
-            try:
-                if os.path.isfile(working_path):
-                    os.remove(working_path)
-            except OSError:
-                pass
-            with jobs_lock:
-                jobs[job_id]["status"] = "cancelled"
-                jobs[job_id]["message"] = "Cancelled"
-            log.info("PREPARE [%s] cancelled by user", job_id)
-        except Exception as exc:
-            with jobs_lock:
-                jobs[job_id]["status"] = "error"
-                jobs[job_id]["message"] = f"Conversion failed: {exc}"
-                jobs[job_id]["error"] = str(exc)
-            log.error("PREPARE [%s] FAILED: %s", job_id, exc)
-        finally:
-            with jobs_lock:
-                jobs[job_id]["proc"] = None
-
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-
-    return jsonify({"job_id": job_id, "status": "preparing"})
-
-
 @app.route("/api/probe")
 def probe():
     path = request.args.get("path", "")
@@ -467,11 +260,8 @@ def serve_video():
     path = request.args.get("path", "")
     if not path or not os.path.isfile(path):
         return "Not found", 404
-    # Serve working copy if one was prepared
-    with working_cache_lock:
-        working = working_cache.get(path)
-    if working and os.path.isfile(working):
-        return send_file(working, conditional=True)
+    # Only browser-playable files reach here; anything else is previewed through
+    # /media/window instead.
     return send_file(path, conditional=True)
 
 
@@ -566,9 +356,8 @@ def serve_window():
 def serve_wave():
     """A waveform PNG for the whole file, drawn behind the timeline.
 
-    Built from the preview proxy when one exists (its audio is already a small
-    stereo AAC track, so decoding is far cheaper than pulling audio out of a
-    multi-track BluRay source). Cached on disk keyed by the source path.
+    Decodes the source's audio once and caches the result on disk, keyed by path.
+    Loaded async by the <img>, so a slow build never holds up playback.
     """
     path = request.args.get("path", "")
     if not path or not os.path.isfile(path):
@@ -580,16 +369,12 @@ def serve_wave():
     if os.path.isfile(wave_path):
         return send_file(wave_path, mimetype="image/png")
 
-    with working_cache_lock:
-        working = working_cache.get(path)
-    source = working if (working and os.path.isfile(working)) else path
-
-    if not has_audio(source):
+    if not has_audio(path):
         return "No audio", 404
 
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-i", source,
+        "-i", path,
         "-filter_complex", "showwavespic=s=2000x120:colors=#7aa2f7",
         "-frames:v", "1", wave_path,
     ]
@@ -781,34 +566,9 @@ def job_status(job_id):
     })
 
 
-@app.route("/api/job/<job_id>/cancel", methods=["POST"])
-def cancel_job(job_id):
-    with jobs_lock:
-        job = jobs.get(job_id)
-        if not job:
-            return jsonify({"error": "Job not found"}), 404
-        if not job.get("cancellable"):
-            return jsonify({"error": "This job can't be cancelled"}), 409
-        if job["status"] != "running":
-            return jsonify({"status": job["status"]})
-        job["cancel"] = True
-        job["message"] = "Cancelling..."
-        proc = job.get("proc")
-
-    log.info("CANCEL [%s] requested", job_id)
-    if proc and proc.poll() is None:
-        proc.terminate()  # ffmpeg shuts down cleanly on SIGTERM
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    return jsonify({"status": "cancelling"})
-
-
 @app.route("/api/job/<job_id>/stream")
 def job_stream(job_id):
     def generate():
-        import time
         last_msg = None
         while True:
             with jobs_lock:
@@ -822,7 +582,7 @@ def job_stream(job_id):
             if msg != last_msg:
                 yield f"data: {__import__('json').dumps(msg)}\n\n"
                 last_msg = msg
-            if job["status"] in ("complete", "error", "cancelled"):
+            if job["status"] in ("complete", "error"):
                 break
             time.sleep(0.5)
 

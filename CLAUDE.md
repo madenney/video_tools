@@ -31,7 +31,7 @@ Frame-accurate video slicing using boundary re-encode: only ~4s chunks around ea
   - Helpers: `build_encoder_args()`, `stream_copy_segment()`, `cut_and_encode_segment()`, `concat_segments()`. Legacy `convert_to_intraframe()` and `slice_precise()` still present.
 
 ### Slice web UI (`slice_ui.py`)
-Browser-based clip editor. Flask backend + single-page app: browse local files, preview in an HTML5 player, set start/end on a waveform timeline, and cut. Async via threading, SSE for progress. Output goes to `output/`.
+Browser-based clip editor. Flask backend + single-page app: browse local files, preview in an HTML5 player, set start/end on a waveform timeline, and cut. Async via threading, SSE for progress. **Cuts save next to the source file** (`resolve_output_dir()`), falling back to `output/` for sources inside `.uploads/`/`.working_copies/` or on read-only mounts.
 - `templates/slice.html` — Single HTML template with inline CSS/JS (dark theme, vanilla JS, no build tools). Timeline/trim UI is ported from the `clipmine` project.
 - **Preview windows** (`GET /media/window?path=&idx=`): browsers can't decode HEVC. Rather than transcoding a whole 45-min episode up front, the preview is built as 60s H.264 blocks on demand (NVENC, libx264 fallback), grid-aligned and cached in `.working_copies/windows/`. Opening or seeking anywhere costs ~2s instead of ~60s. Blocks carry 2s of overlap and the next one is prefetched, so playback crosses boundaries without stalling.
   - `-ss` precedes `-i` in the block build, so block time 0 is **exactly** `idx * WINDOW_SEC` in the source. The frontend adds that offset back (`regionStartMs`) — the timeline always spans the whole file. Verified by frame comparison (38.6 dB PSNR aligned vs 13.8 dB one second off); if you change the build command, re-check this.
@@ -40,6 +40,7 @@ Browser-based clip editor. Flask backend + single-page app: browse local files, 
 - `GET /media/wave` — `showwavespic` PNG behind the timeline, cached in `.working_copies/waves/`.
 - `POST /api/snapcuts` — snaps a trim edge to the nearest scene cut (ffmpeg `select='gt(scene,N)'`), landing one frame *inside* the cut to avoid a flash of the neighbouring shot.
 - `POST /api/slice` takes `mode`: `accurate` (default) or `fast`.
+- `POST /api/locate` — a browser drop exposes a blob, not a path. Rather than uploading gigabytes, the server finds the file on disk by name+size and loads it in place. `/api/upload` is the fallback for files that genuinely aren't local.
 
 ### Download dispatcher
 - `download_video.py` — Regex-based URL detection, dispatches to the appropriate downloader via subprocess

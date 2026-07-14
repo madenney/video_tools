@@ -98,13 +98,6 @@
     animation: spin 0.8s linear infinite;
   }
   .spinner-label { color: #ccd1dd; font-size: 0.9em; }
-  .spinner-bar {
-    width: 260px; max-width: 60%; height: 6px;
-    background: var(--line); border-radius: 3px; overflow: hidden;
-  }
-  .spinner-bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
-  .spinner-cancel { font-size: 0.85em; padding: 5px 14px; }
-  .spinner-cancel:hover:not(:disabled) { background: #3d1e26; border-color: var(--bad); color: var(--bad); }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* --- Timeline (ported from clipmine) --- */
