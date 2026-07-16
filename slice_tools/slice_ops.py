@@ -214,6 +214,39 @@ def accurate_cut(input_path, output_path, start_seconds, end_seconds,
     raise RuntimeError(f"accurate_cut failed: {last_err}")
 
 
+def make_gif(input_path, output_path, start_seconds, end_seconds,
+             fps=15, width=640, progress_cb=None):
+    """Cut a range to an animated GIF via a two-pass palette for decent color.
+
+    A single-pass GIF quantizes to a generic 256-colour table and bands badly.
+    palettegen builds a palette from this exact clip; paletteuse then dithers
+    against it. Scaled down and frame-rate reduced because GIF is huge otherwise.
+    """
+    duration = max(0.0, end_seconds - start_seconds)
+    filters = f"fps={fps},scale={width}:-1:flags=lanczos"
+
+    with tempfile.TemporaryDirectory(prefix="gif_") as tmpdir:
+        palette = os.path.join(tmpdir, "palette.png")
+        run_cmd([
+            "ffmpeg", "-y",
+            "-ss", format_seconds(start_seconds), "-t", format_seconds(duration),
+            "-i", input_path,
+            "-vf", f"{filters},palettegen=stats_mode=diff",
+            palette,
+        ])
+        gen = [
+            "ffmpeg", "-y",
+            "-ss", format_seconds(start_seconds), "-t", format_seconds(duration),
+            "-i", input_path, "-i", palette,
+            "-lavfi", f"{filters}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3",
+            "-loop", "0", output_path,
+        ]
+        if progress_cb:
+            run_cmd_with_progress(gen, duration, progress_cb)
+        else:
+            run_cmd(gen)
+
+
 def stream_copy_segment(input_path, output_path, start, end):
     cmd = [
         "ffmpeg",

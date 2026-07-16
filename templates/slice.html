@@ -125,6 +125,15 @@
   }
   #tl .play { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; }
 
+  /* Zoom bar */
+  #zoombar {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-shrink: 0; font-size: 0.8em; color: var(--muted); font-family: monospace;
+  }
+  #zoombar button { padding: 3px 9px; font-size: 0.9em; }
+  #zoombar .zlbl b { color: var(--accent); }
+  #zoombar .zhint { color: #4e5468; margin-left: 6px; }
+
   /* Nudge bar */
   #nudgebar {
     display: flex; align-items: center; justify-content: center; gap: 22px;
@@ -216,6 +225,15 @@
     <div class="play" id="play"></div>
   </div>
 
+  <div id="zoombar">
+    <span class="zlbl">zoom <b id="zoomLbl">full</b></span>
+    <button id="zoomOut" title="Zoom out">&#8722;</button>
+    <button id="zoomIn" title="Zoom in (or scroll on the timeline)">&#43;</button>
+    <button id="zoomSel" title="Zoom to fit the current selection">&#8596; selection</button>
+    <button id="zoomFit" title="Show the whole clip">&#10530; full</button>
+    <span class="zhint">scroll over timeline to zoom &middot; shift-scroll to pan</span>
+  </div>
+
   <div id="nudgebar">
     <div class="nudgegrp">
       <span class="nlbl">START <b id="tcIn">0:00.000</b></span>
@@ -246,10 +264,15 @@
       <input type="checkbox" id="loopChk" checked> loop selection
     </label>
     <button id="playSelBtn" title="Play the selection from its start">&#9654; Selection</button>
+    <div class="sep"></div>
+    <button id="muteBtn" title="Mute / unmute">&#128266;</button>
+    <input type="range" id="vol" min="0" max="1" step="0.05" value="1"
+           title="Volume" style="width:80px">
   </div>
 
   <div class="bottom">
     <button class="primary" id="sliceBtn" onclick="startSlice()">&#9986; Cut (Enter)</button>
+    <button id="gifBtn" onclick="startSlice('gif')" title="Export the selection as an animated GIF">&#127902; GIF</button>
     <label class="loop-toggle" title="Fast mode stream-copies the middle of the clip: quicker, but the cut snaps to a keyframe and can run a couple of frames long.">
       <input type="checkbox" id="fastChk"> fast cut (not frame-exact)
     </label>
@@ -266,6 +289,9 @@
   const statusBox = $('#statusBox');
   const downloadArea = $('#downloadArea');
   const sliceBtn = $('#sliceBtn');
+  const gifBtn = $('#gifBtn');
+  // Re-enable both action buttons together — either can start a job.
+  function enableActions() { sliceBtn.disabled = false; gifBtn.disabled = false; }
   const playBtn = $('#playBtn');
   const spinner = $('#spinner');
   const spinnerLabel = $('#spinnerLabel');
@@ -293,8 +319,24 @@
   let regionStartMs = 0;    // absolute time of that block's first frame
   const prefetched = new Set();
 
-  function msToFrac(ms) { return durMs > 0 ? Math.max(0, Math.min(1, ms / durMs)) : 0; }
-  function fracToMs(f) { return Math.round(Math.max(0, Math.min(1, f)) * durMs); }
+  // The timeline shows a VIEW window [viewStartMs, viewEndMs] of the file. At
+  // full zoom that's the whole file; zooming in shrinks the span so a 100ms
+  // nudge is actually visible on a 45-min source. Fractions can fall outside
+  // 0..1 (off-screen) — draw() clamps for display.
+  let viewStartMs = 0, viewEndMs = 0;
+  const MIN_SPAN_MS = 1000;  // don't zoom past ~1s of timeline
+  function viewSpan() { return Math.max(1, viewEndMs - viewStartMs); }
+  function resetView() { viewStartMs = 0; viewEndMs = durMs; }
+  function msToFrac(ms) { return (ms - viewStartMs) / viewSpan(); }
+  function fracToMs(f) { return Math.round(viewStartMs + f * viewSpan()); }
+
+  function clampView() {
+    let span = Math.min(viewSpan(), durMs);
+    if (span < MIN_SPAN_MS) span = MIN_SPAN_MS;
+    if (viewStartMs < 0) viewStartMs = 0;
+    if (viewStartMs + span > durMs) viewStartMs = Math.max(0, durMs - span);
+    viewEndMs = viewStartMs + span;
+  }
 
   // Position in the FILE, not in the loaded block.
   function vidMs() { return regionStartMs + (player.currentTime || 0) * 1000; }
@@ -370,23 +412,53 @@
   // Positions are pixels off #tl's measured width, so draw() must re-run on resize.
   function draw() {
     if (durMs <= 0) return;
+    if (viewEndMs <= viewStartMs) resetView();
     const w = $('#tl').clientWidth;
-    const xi = msToFrac(inMs) * w, xo = msToFrac(outMs) * w;
+    const clamp = x => Math.max(0, Math.min(w, x));
+    const xi = clamp(msToFrac(inMs) * w), xo = clamp(msToFrac(outMs) * w);
     $('#hIn').style.left = xi + 'px';
     $('#hOut').style.left = xo + 'px';
     $('#sel').style.left = xi + 'px';
     $('#sel').style.width = Math.max(0, xo - xi) + 'px';
-    $('#play').style.left = msToFrac(vidMs()) * w + 'px';
+
+    // Playhead: hide it when the current position is scrolled out of view.
+    const pf = msToFrac(vidMs());
+    const play = $('#play');
+    if (pf < 0 || pf > 1) { play.style.display = 'none'; }
+    else { play.style.display = 'block'; play.style.left = (pf * w) + 'px'; }
+
+    // Stretch the whole-file waveform PNG so only the view span fills the track.
+    const wave = $('#wave');
+    wave.style.right = 'auto';
+    wave.style.width = (durMs / viewSpan() * 100) + '%';
+    wave.style.left = (-viewStartMs / viewSpan() * w) + 'px';
+
     $('#tcIn').textContent = fmt(inMs);
     $('#tcOut').textContent = fmt(outMs);
     $('#tcNow').textContent = fmt(vidMs());
     $('#tcLen').textContent = ((outMs - inMs) / 1000).toFixed(1) + 's';
+    $('#zoomLbl').textContent = viewSpan() >= durMs ? 'full'
+      : (viewSpan() / 1000).toFixed(viewSpan() < 10000 ? 1 : 0) + 's';
+  }
+
+  // Keep the playhead on screen while playing and zoomed in: once it reaches the
+  // right edge, scroll the view forward by most of a span.
+  function followPlayhead() {
+    if (player.paused || viewSpan() >= durMs) return;
+    const pf = msToFrac(vidMs());
+    if (pf < 0 || pf > 0.98) {
+      const span = viewSpan();
+      viewStartMs = vidMs() - span * 0.1;
+      viewEndMs = viewStartMs + span;
+      clampView();
+    }
   }
 
   function loop() {
     if (durMs > 0) {
       // Loop playback inside the selection so you can study the cut you just made.
       if (!player.paused && $('#loopChk').checked && vidMs() > outMs) seekToMs(inMs);
+      followPlayhead();
       draw();
     }
     requestAnimationFrame(loop);
@@ -417,6 +489,67 @@
     if (!drag) return;
     seekToMs(drag === 'in' ? inMs : outMs);  // preview the frame you just landed on
     drag = null;
+  });
+
+  // --- Zoom ---
+  // Wheel zooms around the cursor; Shift+wheel pans. Keeps the ms under the
+  // pointer pinned so zooming feels anchored to what you're looking at.
+  function zoomAt(frac, factor) {
+    if (durMs <= 0) return;
+    const anchor = fracToMs(frac);
+    let span = Math.min(durMs, Math.max(MIN_SPAN_MS, viewSpan() * factor));
+    viewStartMs = anchor - frac * span;
+    viewEndMs = viewStartMs + span;
+    clampView();
+    draw();
+  }
+  function panBy(deltaMs) {
+    if (viewSpan() >= durMs) return;
+    viewStartMs += deltaMs;
+    viewEndMs += deltaMs;
+    clampView();
+    draw();
+  }
+  function fitSelection() {
+    if (durMs <= 0 || outMs - inMs < MIN_SPAN_MS) return;
+    const pad = (outMs - inMs) * 0.15;  // a little breathing room around the cut
+    viewStartMs = inMs - pad;
+    viewEndMs = outMs + pad;
+    clampView();
+    draw();
+  }
+  $('#tl').addEventListener('wheel', e => {
+    if (durMs <= 0) return;
+    e.preventDefault();
+    if (e.shiftKey) { panBy(viewSpan() * (e.deltaY > 0 ? 0.15 : -0.15)); return; }
+    zoomAt(tlX(e), e.deltaY < 0 ? 0.8 : 1.25);  // up = in, down = out
+  }, { passive: false });
+  $('#zoomIn').onclick = () => zoomAt(0.5, 0.6);
+  $('#zoomOut').onclick = () => zoomAt(0.5, 1.66);
+  $('#zoomFit').onclick = () => { resetView(); draw(); };
+  $('#zoomSel').onclick = fitSelection;
+
+  // --- Volume ---
+  // The player has no native controls (custom timeline), so wire our own. Note:
+  // the J/K/L shuttle changes playbackRate, and browsers silence audio outside
+  // ~0.5-4x — K resets to 1x and brings it back.
+  const volEl = $('#vol'), muteBtn = $('#muteBtn');
+  function syncVolIcon() {
+    muteBtn.innerHTML = (player.muted || player.volume === 0) ? '&#128263;' : '&#128266;';
+  }
+  volEl.oninput = () => {
+    player.volume = +volEl.value;
+    player.muted = +volEl.value === 0;
+    syncVolIcon();
+  };
+  muteBtn.onclick = () => {
+    player.muted = !player.muted;
+    if (!player.muted && player.volume === 0) { player.volume = 1; volEl.value = 1; }
+    syncVolIcon();
+  };
+  player.addEventListener('volumechange', () => {
+    if (!player.muted) volEl.value = player.volume;
+    syncVolIcon();
   });
 
   // Coalesced seeking: while a seek is in flight keep only the latest target and
@@ -711,6 +844,7 @@
     videoError.style.display = 'none';
     $('#wave').removeAttribute('src');
     durMs = 0; inMs = 0; outMs = 0;
+    viewStartMs = 0; viewEndMs = 0;
     windowed = false; winIdx = -1; regionStartMs = 0;
     prefetched.clear();
     if (eventSource) { eventSource.close(); eventSource = null; }
@@ -754,6 +888,7 @@
       parts.push(fmtShort(durMs));
       inMs = 0;              // default selection: the whole clip
       outMs = Math.round(durMs);
+      resetView();          // timeline shows the whole file until you zoom
       draw();
     }
     if (info.has_audio) parts.push('audio');
@@ -839,9 +974,11 @@
       // Trust the decoded length over the probe when they disagree, but keep the
       // selection end pinned to the clip end if it was never moved.
       const wasFullClip = Math.abs(outMs - durMs) < 1;
+      const wasFullView = viewEndMs >= durMs - 1;
       durMs = player.duration * 1000;
       if (wasFullClip) outMs = Math.round(durMs);
       outMs = Math.min(outMs, Math.round(durMs));
+      if (wasFullView) resetView();  // keep a full-zoom timeline spanning the new length
     }
     draw();
   });
@@ -851,26 +988,32 @@
   player.addEventListener('playing', hideSpinner);
 
   // ============ CUT ============
-  function startSlice() {
+  function startSlice(mode) {
     if (!selectedFile || durMs <= 0) return;
     if (outMs - inMs < MIN_SEL_MS) { toast('Selection is too short'); return; }
 
-    // Accurate mode re-encodes every frame in the selection. The default
-    // selection is the WHOLE file, so it's easy to kick off a 15-minute encode
-    // by accident when you meant to grab a 10-second clip.
+    // mode: undefined -> the Cut button (accurate, or fast if the box is ticked);
+    // 'gif' -> the GIF button.
+    if (!mode) mode = $('#fastChk').checked ? 'fast' : 'accurate';
+
+    // These re-encode every frame in the selection. The default selection is the
+    // WHOLE file, so it's easy to kick off a 15-minute encode by accident when
+    // you meant a 10-second clip.
     const selSec = (outMs - inMs) / 1000;
-    if (!$('#fastChk').checked && selSec > 120) {
+    const heavy = mode === 'accurate' ? 120 : (mode === 'gif' ? 30 : Infinity);
+    if (selSec > heavy) {
       const mins = (selSec / 60).toFixed(1);
+      const what = mode === 'gif' ? 'A GIF this long will be huge' : 'This re-encodes every frame';
       const ok = confirm('Your selection is ' + mins + ' minutes long.\n\n' +
-        'A frame-accurate cut re-encodes every frame, so this will take a while. ' +
-        'Drag the handles in if you meant to cut a shorter clip.\n\n' +
-        'OK to cut all ' + mins + ' minutes.');
+        what + ', so this will take a while. Drag the handles in if you meant a ' +
+        'shorter clip.\n\nOK to process all ' + mins + ' minutes.');
       if (!ok) return;
     }
 
     sliceBtn.disabled = true;
+    gifBtn.disabled = true;
     statusBox.className = 'status visible running';
-    statusBox.textContent = 'Cutting…';
+    statusBox.textContent = mode === 'gif' ? 'Making GIF…' : 'Cutting…';
     downloadArea.innerHTML = '';
     if (eventSource) { eventSource.close(); eventSource = null; }
 
@@ -881,7 +1024,7 @@
         path: selectedFile,
         start: tcForApi(inMs),
         stop: tcForApi(outMs),
-        mode: $('#fastChk').checked ? 'fast' : 'accurate',
+        mode: mode,
       })
     })
     .then(r => r.json())
@@ -889,7 +1032,7 @@
       if (data.error) {
         statusBox.className = 'status visible error';
         statusBox.textContent = data.error;
-        sliceBtn.disabled = false;
+        enableActions();
         return;
       }
       listenToJob(data.job_id);
@@ -897,7 +1040,7 @@
     .catch(err => {
       statusBox.className = 'status visible error';
       statusBox.textContent = 'Request failed: ' + err;
-      sliceBtn.disabled = false;
+      enableActions();
     });
   }
 
@@ -916,7 +1059,7 @@
       } else if (data.status === 'error') {
         statusBox.className = 'status visible error';
       }
-      sliceBtn.disabled = false;
+      enableActions();
     };
     eventSource.onmessage = function(e) {
       const data = JSON.parse(e.data);
@@ -944,7 +1087,7 @@
           statusBox.className = 'status visible error';
           statusBox.textContent = 'Lost contact with the job (' + err.message +
                                   '). It may still be running — check the output folder.';
-          sliceBtn.disabled = false;
+          enableActions();
         });
     };
   }

@@ -12,8 +12,8 @@ import uuid
 
 from flask import Flask, jsonify, request, render_template, send_file, Response
 
-from slice_tools.slice_ops import accurate_cut, boundary_slice
-from slice_tools.ffmpeg_utils import probe_video_info, probe_duration, has_audio
+from slice_tools.slice_ops import accurate_cut, boundary_slice, make_gif
+from slice_tools.ffmpeg_utils import probe_video_info, probe_duration, has_audio, probe_audio_codec
 from slice_tools.timecode import parse_timecode
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -68,6 +68,11 @@ VIDEO_EXTENSIONS = {
 # deliberately excluded — Chrome/Firefox can't decode it, so it needs a proxy.
 BROWSER_CODECS = {"h264", "vp8", "vp9", "av1"}
 
+# Audio codecs a browser can decode. AC-3/E-AC-3 (DD/DDP), DTS, TrueHD are NOT
+# here — a WEB-DL with H.264 video plays picture but silence unless the audio is
+# re-encoded, which is exactly what the windowed preview does.
+BROWSER_AUDIO = {"aac", "mp3", "opus", "vorbis", "flac"}
+
 # Containers the browser can demux
 BROWSER_CONTAINERS = {".mp4", ".m4v", ".webm", ".mov"}
 
@@ -100,18 +105,20 @@ def resolve_output_dir(input_path):
     return src_dir
 
 
-def check_format_status(path, codec):
+def check_format_status(path, codec, audio_codec=None):
     """Return 'ready' if the browser can play the file as-is, else 'windowed'.
 
     'ready'    — stream the original straight to the player.
-    'windowed' — the browser can't decode or demux this, so preview it through
-                 on-demand blocks (see /media/window).
+    'windowed' — the browser can't decode the video OR the audio (or can't demux
+                 the container), so preview it through on-demand blocks
+                 (see /media/window), which re-encode both to browser codecs.
     """
     ext = os.path.splitext(path)[1].lower()
     codec = (codec or "").lower()
-    if codec in BROWSER_CODECS and ext in BROWSER_CONTAINERS:
-        return "ready"
-    return "windowed"
+    audio_codec = (audio_codec or "").lower()
+    video_ok = codec in BROWSER_CODECS and ext in BROWSER_CONTAINERS
+    audio_ok = not audio_codec or audio_codec in BROWSER_AUDIO
+    return "ready" if (video_ok and audio_ok) else "windowed"
 
 
 def get_output_extension(codec):
@@ -239,15 +246,16 @@ def probe():
     try:
         info = probe_video_info(path)
         duration = probe_duration(path)
-        audio = has_audio(path)
+        audio_codec = probe_audio_codec(path)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
     codec = (info.get("codec_name") or "").lower()
-    format_status = check_format_status(path, codec)
+    format_status = check_format_status(path, codec, audio_codec)
 
     info["duration"] = duration
-    info["has_audio"] = audio
+    info["has_audio"] = audio_codec is not None
+    info["audio_codec"] = audio_codec
     info["path"] = path
     info["filename"] = os.path.basename(path)
     info["playable"] = format_status == "ready"
@@ -495,11 +503,14 @@ def start_slice():
     basename = os.path.splitext(os.path.basename(input_path))[0]
     start_safe = sanitize_timecode_for_filename(start_tc)
     stop_safe = sanitize_timecode_for_filename(stop_tc)
-    try:
-        info = probe_video_info(slice_input)
-        ext = get_output_extension(info.get("codec_name"))
-    except Exception:
-        ext = ".mp4"
+    if mode == "gif":
+        ext = ".gif"
+    else:
+        try:
+            info = probe_video_info(slice_input)
+            ext = get_output_extension(info.get("codec_name"))
+        except Exception:
+            ext = ".mp4"
 
     out_dir = resolve_output_dir(input_path)
     os.makedirs(out_dir, exist_ok=True)
@@ -522,13 +533,20 @@ def start_slice():
         with jobs_lock:
             jobs[job_id]["progress"] = round(pct)
 
+    msg_for_mode = {
+        "gif": "Making GIF...",
+        "fast": "Cutting (fast)...",
+        "accurate": "Cutting (frame-accurate)...",
+    }
+
     def worker():
         try:
             with jobs_lock:
-                jobs[job_id]["message"] = (
-                    "Cutting (frame-accurate)..." if mode == "accurate" else "Cutting (fast)..."
-                )
-            if mode == "fast":
+                jobs[job_id]["message"] = msg_for_mode.get(mode, "Cutting...")
+            if mode == "gif":
+                make_gif(slice_input, output_path, start_seconds, end_seconds,
+                         progress_cb=on_progress)
+            elif mode == "fast":
                 boundary_slice(slice_input, output_path, start_seconds, end_seconds)
             else:
                 used = accurate_cut(slice_input, output_path, start_seconds,

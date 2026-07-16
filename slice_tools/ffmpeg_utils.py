@@ -91,6 +91,20 @@ def has_audio(path):
     return "audio" in probe_stream_types(path)
 
 
+def probe_audio_codec(path):
+    """codec_name of the first audio stream, or None if there is no audio."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "json", path,
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=True)
+    data = json.loads(result.stdout) if result.stdout else {}
+    streams = data.get("streams", [])
+    return streams[0].get("codec_name") if streams else None
+
+
 def probe_video_info(path):
     cmd = [
         "ffprobe",
