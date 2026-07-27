@@ -231,7 +231,7 @@
     <button id="zoomIn" title="Zoom in (or scroll on the timeline)">&#43;</button>
     <button id="zoomSel" title="Zoom to fit the current selection">&#8596; selection</button>
     <button id="zoomFit" title="Show the whole clip">&#10530; full</button>
-    <span class="zhint">scroll over timeline to zoom &middot; shift-scroll to pan</span>
+    <span class="zhint">scroll to zoom &middot; click-drag to pan &middot; click to seek</span>
   </div>
 
   <div id="nudgebar">
@@ -439,6 +439,12 @@
     $('#tcLen').textContent = ((outMs - inMs) / 1000).toFixed(1) + 's';
     $('#zoomLbl').textContent = viewSpan() >= durMs ? 'full'
       : (viewSpan() / 1000).toFixed(viewSpan() < 10000 ? 1 : 0) + 's';
+
+    // Grab cursor only while there's somewhere to pan (zoomed in) and not
+    // mid-drag (mouseup restores it). Otherwise the plain seek crosshair.
+    if (!pan || !pan.moved) {
+      $('#tl').style.cursor = viewSpan() < durMs ? 'grab' : 'crosshair';
+    }
   }
 
   // Keep the playhead on screen while playing and zoomed in: once it reaches the
@@ -466,29 +472,60 @@
   requestAnimationFrame(loop);
   window.addEventListener('resize', draw);
 
-  // --- Handle drag + click-to-seek ---
-  let drag = null;
+  // --- Handle drag, pan, click-to-seek ---
+  let drag = null;   // dragging a trim handle: 'in' | 'out'
+  let pan = null;    // dragging the timeline background to scroll the view
+  const PAN_THRESHOLD = 4;  // px before a press counts as a drag rather than a click
   function tlX(e) {
     const r = $('#tl').getBoundingClientRect();
     return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   }
   $('#hIn').addEventListener('mousedown', e => { drag = 'in'; e.preventDefault(); });
   $('#hOut').addEventListener('mousedown', e => { drag = 'out'; e.preventDefault(); });
+  // Press on the timeline background: start a pan-or-click gesture. Which one it
+  // is gets decided on move — under the threshold it's a click (seek), over it a
+  // drag (pan). Panning only bites when zoomed in; at full zoom there's nowhere
+  // to scroll, so it stays a plain seek.
   $('#tl').addEventListener('mousedown', e => {
-    if (drag || e.target.classList.contains('handle')) return;
-    seekToMs(fracToMs(tlX(e)));  // click anywhere to move the playhead
+    if (drag || e.target.classList.contains('handle') || durMs <= 0) return;
+    e.preventDefault();
+    pan = { startX: e.clientX, startFrac: tlX(e), startView: viewStartMs,
+            span: viewSpan(), w: $('#tl').clientWidth, moved: false };
   });
   document.addEventListener('mousemove', e => {
-    if (!drag || durMs <= 0) return;
-    const ms = fracToMs(tlX(e));
-    if (drag === 'in') inMs = Math.min(ms, outMs - MIN_SEL_MS);
-    else outMs = Math.max(ms, inMs + MIN_SEL_MS);
-    draw();
+    if (drag && durMs > 0) {
+      const ms = fracToMs(tlX(e));
+      if (drag === 'in') inMs = Math.min(ms, outMs - MIN_SEL_MS);
+      else outMs = Math.max(ms, inMs + MIN_SEL_MS);
+      draw();
+      return;
+    }
+    if (pan) {
+      const dx = e.clientX - pan.startX;
+      if (!pan.moved && Math.abs(dx) > PAN_THRESHOLD) {
+        pan.moved = true;
+        $('#tl').style.cursor = 'grabbing';
+      }
+      if (pan.moved && pan.span < durMs) {
+        // Drag right → view slides earlier, so the content follows the cursor.
+        viewStartMs = pan.startView - (dx / pan.w) * pan.span;
+        viewEndMs = viewStartMs + pan.span;
+        clampView();
+        draw();
+      }
+    }
   });
   document.addEventListener('mouseup', () => {
-    if (!drag) return;
-    seekToMs(drag === 'in' ? inMs : outMs);  // preview the frame you just landed on
-    drag = null;
+    if (drag) {
+      seekToMs(drag === 'in' ? inMs : outMs);  // preview the frame you just landed on
+      drag = null;
+      return;
+    }
+    if (pan) {
+      if (!pan.moved) seekToMs(fracToMs(pan.startFrac));  // no drag → it was a click
+      $('#tl').style.cursor = '';
+      pan = null;
+    }
   });
 
   // --- Zoom ---
@@ -1124,6 +1161,12 @@
   // --- Startup: restore recents, auto-load the most recent clip if it survives ---
   (function init() {
     renderRecents();
+
+    // ?path=<abs path> opens a specific file straight away — lets a link load a
+    // clip without picking it by hand.
+    const wanted = new URLSearchParams(location.search).get('path');
+    if (wanted) { loadVideo(wanted); return; }
+
     const list = getRecents();
     if (!list.length) return;
     const last = list[0];
