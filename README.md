@@ -1,119 +1,114 @@
 # Video Tools
 
-Small scripts for generating overlays/thumbnails and downloading videos.
+A collection of standalone CLI scripts (plus one web app) for video overlays,
+thumbnails, frame-accurate slicing, and downloading media from YouTube, Twitch,
+Twitter/X, and Instagram. Each script runs directly — no build step.
 
-Notes:
-- `output/` is gitignored and used for test assets and default outputs.
-- Most scripts assume `ffmpeg`/`ffprobe` and Python packages are installed.
+## Tools at a glance
 
-## Overlay tools
+| Tool | What it does |
+|------|--------------|
+| `slice_ui.py` | **Browser clip editor** — preview any file, set start/end on a waveform timeline, and cut. Frame-accurate, GPU-accelerated, GIF export, audio-track picker. |
+| `accurate_slice.py` | Frame-accurate slice from the command line. |
+| `overlay.py` | Add bottom-left / bottom-right text captions to a video. |
+| `generate_overlay.py` | Build just the transparent overlay PNG. |
+| `apply_overlay.py` | Composite an existing overlay PNG onto a video. |
+| `thumbnail.py` | Generate a 1920×1080 thumbnail with auto-sized text. |
+| `download_video.py` | **Unified downloader** — detects the platform and dispatches. |
+| `yt_downloader.py` | YouTube (via yt-dlp). |
+| `twitch_downloader.py` | Twitch VODs. |
+| `twitter_downloader.py` | Twitter/X posts. |
+| `instagram_downloader.py` | Instagram posts, reels, and TV. |
+| `index.py` | Prints this list of tools in the terminal. |
 
-Create an overlay PNG and apply it to a video.
+## Requirements
+
+- **ffmpeg / ffprobe** — slicing, overlays, downloads
+- **Pillow** — overlay and thumbnail image generation
+- **yt-dlp** — all downloaders (`pipx install yt-dlp`)
+- **Flask** — only for `slice_ui.py` (`pip install flask`)
+- `assets/cour_bold.ttf` — font used by overlays and thumbnails
+
+`output/` is gitignored and used for default outputs and test assets.
+
+## Clip editor (`slice_ui.py`)
+
+A browser-based editor: browse local files, scrub on a waveform timeline, set an
+in/out selection, and cut it — saved next to the source file at full quality.
 
 ```bash
-python overlay.py input.mp4 output.mp4 "Left text" "Right text"
-python overlay.py -t 1920 1080 "Left text" output/overlay.png "Right text"
+python slice_ui.py            # serves on http://127.0.0.1:5000
+python slice_ui.py -p 5055    # custom port
 ```
 
-Generate an overlay PNG directly:
-```bash
-python generate_overlay.py 1920 1080 "Left text" output/overlay.png "Right text"
-python generate_overlay.py -t
-```
+- **Preview** builds short H.264 blocks on demand, so a 45-minute HEVC file opens
+  in ~2s instead of transcoding up front. Cuts always run on the original.
+- **Cut modes**: frame-accurate (default), fast (keyframe-snapped), or GIF export.
+- **Audio-track picker** appears for multi-track files (e.g. screen recordings
+  with separate mic/desktop tracks); the cut follows the track you pick.
+- Jump straight to a file with `?path=/abs/path/to/video.mp4`.
 
-Apply an existing overlay PNG:
-```bash
-python apply_overlay.py input.mp4 overlay.png output.mp4
-```
+## Command-line slice (`accurate_slice.py`)
 
-## Thumbnails
-
-Generate a 1920x1080 thumbnail with auto-sized text:
-```bash
-python thumbnail.py "Main Title" "Sub text"
-python thumbnail.py "Main Title" "Sub text" /path/to/custom.png
-python thumbnail.py -t
-python thumbnail.py -e
-```
-
-Test mode creates `output/test_thumbnail_N/` with multiple random samples.
-
-## Accurate slice
-
-Frame-accurate slicing by transcoding to an intraframe intermediate first:
 ```bash
 python accurate_slice.py input.mp4 output.mp4 00:01:10 00:01:35
 python accurate_slice.py input.mov output.mp4 1:10 1:35.5
 ```
 
-Time format: `ss`, `mm:ss`, or `hh:mm:ss` (fractions allowed in seconds).
+Time format: `ss`, `mm:ss`, or `hh:mm:ss` (fractions allowed in the seconds).
 
-## Unified downloader
+## Overlays
 
-Download from YouTube, Twitch, or Twitter/X with one script:
+```bash
+# One shot: generate the overlay PNG and apply it
+python overlay.py input.mp4 output.mp4 "Left text" "Right text"
+
+# Generate just the PNG
+python generate_overlay.py 1920 1080 "Left text" output/overlay.png "Right text"
+
+# Apply an existing PNG
+python apply_overlay.py input.mp4 overlay.png output.mp4
+```
+
+Add `-t` to `overlay.py` / `generate_overlay.py` for a test render.
+
+## Thumbnails
+
+```bash
+python thumbnail.py "Main Title" "Sub text"
+python thumbnail.py "Main Title" "Sub text" /path/to/custom.png
+python thumbnail.py -t    # 30 random samples in output/
+python thumbnail.py -e    # empty template
+```
+
+## Downloaders
+
+Use the unified dispatcher, or call a platform script directly — they share the
+same arguments.
+
 ```bash
 python download_video.py "https://www.youtube.com/watch?v=VIDEO_ID"
 python download_video.py "https://www.twitch.tv/videos/123456789" output/
-python download_video.py "https://x.com/user/status/1234567890" output/%(title)s.%(ext)s
-python download_video.py "https://www.youtube.com/watch?v=VIDEO_ID" --audio-only
+python download_video.py "https://x.com/user/status/1234567890"
+python download_video.py "https://www.instagram.com/reel/SHORTCODE/"
+python download_video.py "<url>" --audio-only
 ```
 
-`download_video.py` dispatches to `yt_downloader.py`, `twitch_downloader.py`,
-or `twitter_downloader.py` based on the URL.
+**Output path** (second argument, optional): pass a directory to save as
+`%(title)s.%(ext)s` (Twitch/Twitter fall back to `<platform>_<id>.mp4`), or pass
+a file / yt-dlp template to use it as-is. Defaults to the current directory.
 
-## YouTube downloader
+Twitter/X honors a `YT_DLP_PATH` override in a repo-root `.env` file.
 
-Download a YouTube video using yt-dlp:
-```bash
-python yt_downloader.py "https://www.youtube.com/watch?v=VIDEO_ID"
-python yt_downloader.py "https://www.youtube.com/watch?v=VIDEO_ID" output/
-python yt_downloader.py "https://www.youtube.com/watch?v=VIDEO_ID" output/%(title)s.%(ext)s
-python yt_downloader.py "https://www.youtube.com/watch?v=VIDEO_ID" --audio-only
-```
+### Updating yt-dlp
 
-`output_path` can be a directory or a full yt-dlp output template. If you pass
-`output/` (or any existing directory), files are saved as `%(title)s.%(ext)s`.
-If you pass a file/template, it is used as-is. The default is the current
-working directory.
-
-yt-dlp install/update:
-```bash
-pipx install yt-dlp
-pipx upgrade yt-dlp
-yt-dlp -U
-sudo apt install yt-dlp
-```
-
-If you see `nsig extraction failed`, update yt-dlp.
-
-## Twitch downloader
+Most download failures (`nsig extraction failed`, empty responses, "sign in to
+confirm") are fixed by updating:
 
 ```bash
-python twitch_downloader.py https://www.twitch.tv/videos/123456789
-python twitch_downloader.py https://www.twitch.tv/videos/123456789 output/
-python twitch_downloader.py https://www.twitch.tv/videos/123456789 output/vod.mp4
-python twitch_downloader.py https://www.twitch.tv/videos/123456789 --audio-only
+pipx upgrade yt-dlp    # or: yt-dlp -U
 ```
 
-`output_path` can be a directory or a file/template. If you pass a directory,
-files are saved as `twitch_<id>.mp4`. Templates support yt-dlp placeholders
-like `%(id)s`.
-
-## Twitter/X downloader
-
-`twitter_downloader.py` uses yt-dlp. Optional `.env` override:
-```
-YT_DLP_PATH=/path/to/yt-dlp
-```
-
-Run it:
-```bash
-python twitter_downloader.py "https://x.com/user/status/1234567890"
-python twitter_downloader.py "https://x.com/user/status/1234567890" output/
-python twitter_downloader.py "https://x.com/user/status/1234567890" output/tweet.mp4
-python twitter_downloader.py "https://x.com/user/status/1234567890" --audio-only
-```
-
-`output_path` can be a directory or a file/template. If you pass a directory,
-files are saved as `tweet_<id>.mp4`. Audio-only writes `.m4a` and requires
-`ffmpeg`.
+Age-restricted or hardened videos may also need browser cookies
+(`--cookies-from-browser firefox`) and a JavaScript runtime
+(`--js-runtimes node`) passed to yt-dlp directly.

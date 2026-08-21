@@ -105,6 +105,33 @@ def probe_audio_codec(path):
     return streams[0].get("codec_name") if streams else None
 
 
+def probe_audio_tracks(path):
+    """List the audio streams: [{index, codec, channels, language, title}].
+
+    `index` is the audio-relative index (0, 1, ...) usable as ffmpeg `0:a:N`.
+    """
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "a",
+        "-show_entries",
+        "stream=codec_name,channels:stream_tags=language,title",
+        "-of", "json", path,
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=True)
+    data = json.loads(result.stdout) if result.stdout else {}
+    tracks = []
+    for i, s in enumerate(data.get("streams", [])):
+        tags = s.get("tags", {}) or {}
+        tracks.append({
+            "index": i,
+            "codec": s.get("codec_name"),
+            "channels": s.get("channels"),
+            "language": tags.get("language"),
+            "title": tags.get("title"),
+        })
+    return tracks
+
+
 def probe_video_info(path):
     cmd = [
         "ffprobe",

@@ -13,7 +13,7 @@ import uuid
 from flask import Flask, jsonify, request, render_template, send_file, Response
 
 from slice_tools.slice_ops import accurate_cut, boundary_slice, make_gif
-from slice_tools.ffmpeg_utils import probe_video_info, probe_duration, has_audio, probe_audio_codec
+from slice_tools.ffmpeg_utils import probe_video_info, probe_duration, has_audio, probe_audio_codec, probe_audio_tracks
 from slice_tools.timecode import parse_timecode
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -247,6 +247,7 @@ def probe():
         info = probe_video_info(path)
         duration = probe_duration(path)
         audio_codec = probe_audio_codec(path)
+        audio_tracks = probe_audio_tracks(path)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -256,6 +257,7 @@ def probe():
     info["duration"] = duration
     info["has_audio"] = audio_codec is not None
     info["audio_codec"] = audio_codec
+    info["audio_tracks"] = audio_tracks
     info["path"] = path
     info["filename"] = os.path.basename(path)
     info["playable"] = format_status == "ready"
@@ -292,13 +294,19 @@ def _window_lock(key):
         return lock
 
 
-def build_window(path, idx):
-    """Transcode one preview block, cached on disk. Returns its path."""
+def build_window(path, idx, atrack=0):
+    """Transcode one preview block, cached on disk. Returns its path.
+
+    `atrack` selects which audio stream (0:a:N) to carry. Track 0 keeps the
+    original cache filename so existing blocks are reused; other tracks get an
+    `_aN` suffix so each track's blocks cache independently.
+    """
     os.makedirs(WINDOW_DIR, exist_ok=True)
     path_hash = hashlib.md5(path.encode()).hexdigest()[:12]
-    out_path = os.path.join(WINDOW_DIR, f"{path_hash}_{idx:05d}.mp4")
+    suffix = f"_a{atrack}" if atrack else ""
+    out_path = os.path.join(WINDOW_DIR, f"{path_hash}_{idx:05d}{suffix}.mp4")
 
-    with _window_lock((path, idx)):
+    with _window_lock((path, idx, atrack)):
         if os.path.isfile(out_path):
             return out_path
 
@@ -309,7 +317,7 @@ def build_window(path, idx):
         gpu_cmd = [
             "ffmpeg", "-y", "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
             "-ss", f"{start:.3f}", "-i", path, "-t", f"{length:.3f}",
-            "-map", "0:v:0", "-map", "0:a:0?",
+            "-map", "0:v:0", "-map", f"0:a:{atrack}?",
             "-vf", "scale_cuda=w=1280:h=-2:format=yuv420p",
             "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "28",
             "-c:a", "aac", "-b:a", "128k", "-ac", "2",
@@ -318,7 +326,7 @@ def build_window(path, idx):
         cpu_cmd = [
             "ffmpeg", "-y",
             "-ss", f"{start:.3f}", "-i", path, "-t", f"{length:.3f}",
-            "-map", "0:v:0", "-map", "0:a:0?",
+            "-map", "0:v:0", "-map", f"0:a:{atrack}?",
             "-vf", "scale='min(1280,iw)':-2",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
             "-c:a", "aac", "-b:a", "128k", "-ac", "2",
@@ -347,15 +355,16 @@ def serve_window():
     path = request.args.get("path", "")
     try:
         idx = int(request.args.get("idx", "0"))
+        atrack = int(request.args.get("atrack", "0"))
     except ValueError:
         return "Bad idx", 400
-    if not path or not os.path.isfile(path) or idx < 0:
+    if not path or not os.path.isfile(path) or idx < 0 or atrack < 0:
         return "Not found", 404
 
     try:
-        out_path = build_window(path, idx)
+        out_path = build_window(path, idx, atrack)
     except Exception as exc:
-        log.error("WINDOW [%s idx=%d] FAILED: %s", os.path.basename(path), idx, exc)
+        log.error("WINDOW [%s idx=%d a=%d] FAILED: %s", os.path.basename(path), idx, atrack, exc)
         return "Window build failed", 500
     return send_file(out_path, conditional=True)
 
@@ -476,6 +485,16 @@ def start_slice():
     # "fast" stream-copies the bulk: quicker, but the cut snaps to keyframes and
     # can run a couple of frames long.
     mode = data.get("mode", "accurate")
+    # Which source audio stream to keep. None => all tracks (the historic
+    # default); an int matches the track the user picked for preview.
+    audio_track = data.get("audio_track")
+    if audio_track is not None:
+        try:
+            audio_track = int(audio_track)
+            if audio_track < 0:
+                audio_track = None
+        except (TypeError, ValueError):
+            audio_track = None
 
     if not input_path or not os.path.isfile(input_path):
         return jsonify({"error": "Input file not found"}), 404
@@ -525,8 +544,8 @@ def start_slice():
             "error": None,
             "progress": 0,
         }
-    log.info("SLICE [%s] %s mode=%s [%s -> %s] -> %s", job_id,
-             os.path.basename(input_path), mode, start_tc, stop_tc,
+    log.info("SLICE [%s] %s mode=%s atrack=%s [%s -> %s] -> %s", job_id,
+             os.path.basename(input_path), mode, audio_track, start_tc, stop_tc,
              os.path.basename(output_path))
 
     def on_progress(pct):
@@ -547,10 +566,12 @@ def start_slice():
                 make_gif(slice_input, output_path, start_seconds, end_seconds,
                          progress_cb=on_progress)
             elif mode == "fast":
-                boundary_slice(slice_input, output_path, start_seconds, end_seconds)
+                boundary_slice(slice_input, output_path, start_seconds, end_seconds,
+                               audio_track=audio_track)
             else:
                 used = accurate_cut(slice_input, output_path, start_seconds,
-                                    end_seconds, progress_cb=on_progress)
+                                    end_seconds, progress_cb=on_progress,
+                                    audio_track=audio_track)
                 log.info("SLICE [%s] encoded on %s", job_id, used.upper())
             with jobs_lock:
                 jobs[job_id]["status"] = "complete"
@@ -626,7 +647,24 @@ def main():
     parser.add_argument("-p", "--port", type=int, default=5000, help="Port (default: 5000)")
     parser.add_argument("--host", default="127.0.0.1", help="Host (default: 127.0.0.1)")
     parser.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
+    parser.add_argument("--i-know-its-exposed", action="store_true",
+                        help="Required to bind a non-localhost host (see warning below)")
     args = parser.parse_args()
+
+    # This server serves any file on disk by absolute path and has no auth — that
+    # is fine bound to localhost, but binding to a public/LAN interface hands
+    # anyone who can reach it read access to every file this user can read.
+    local_hosts = {"127.0.0.1", "localhost", "::1"}
+    if args.host not in local_hosts and not args.i_know_its_exposed:
+        parser.error(
+            f"Refusing to bind {args.host!r}: this app serves arbitrary files "
+            "with no authentication, so exposing it beyond localhost lets anyone "
+            "on the network read your files. Re-run with --i-know-its-exposed "
+            "only if you fully trust the network."
+        )
+    if args.host not in local_hosts:
+        log.warning("EXPOSED: bound to %s with no auth — anyone who can reach "
+                    "this port can read arbitrary files on this machine.", args.host)
 
     log.info("Starting slice UI at http://%s:%s (logging to %s)",
              args.host, args.port, LOG_FILE)

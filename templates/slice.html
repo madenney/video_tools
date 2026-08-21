@@ -268,6 +268,7 @@
     <button id="muteBtn" title="Mute / unmute">&#128266;</button>
     <input type="range" id="vol" min="0" max="1" step="0.05" value="1"
            title="Volume" style="width:80px">
+    <select id="audioSel" title="Audio track" style="display:none"></select>
   </div>
 
   <div class="bottom">
@@ -317,6 +318,7 @@
   let windowed = false;     // previewing via blocks?
   let winIdx = -1;          // block currently loaded
   let regionStartMs = 0;    // absolute time of that block's first frame
+  let audioTrack = 0;       // which source audio stream the blocks carry
   const prefetched = new Set();
 
   // The timeline shows a VIEW window [viewStartMs, viewEndMs] of the file. At
@@ -355,7 +357,7 @@
     regionStartMs = idx * WINDOW_SEC * 1000;
     pendingSeek = null; seekInFlight = false;
     showSpinner('Building preview&hellip;');
-    player.src = '/media/window?path=' + encodeURIComponent(selectedFile) + '&idx=' + idx;
+    player.src = '/media/window?path=' + encodeURIComponent(selectedFile) + '&idx=' + idx + '&atrack=' + audioTrack;
     player.addEventListener('loadeddata', () => {
       hideSpinner();
       if (seekMs != null) {
@@ -371,10 +373,10 @@
   // the boundary without stalling on a transcode.
   function prefetchWindow(idx) {
     if (!windowed || idx < 0 || idx * WINDOW_SEC * 1000 >= durMs) return;
-    const key = selectedFile + '#' + idx;
+    const key = selectedFile + '#' + idx + '#a' + audioTrack;
     if (prefetched.has(key)) return;
     prefetched.add(key);
-    fetch('/media/window?path=' + encodeURIComponent(selectedFile) + '&idx=' + idx,
+    fetch('/media/window?path=' + encodeURIComponent(selectedFile) + '&idx=' + idx + '&atrack=' + audioTrack,
           { method: 'HEAD' }).catch(() => {});
   }
 
@@ -882,8 +884,9 @@
     $('#wave').removeAttribute('src');
     durMs = 0; inMs = 0; outMs = 0;
     viewStartMs = 0; viewEndMs = 0;
-    windowed = false; winIdx = -1; regionStartMs = 0;
+    windowed = false; winIdx = -1; regionStartMs = 0; audioTrack = 0;
     prefetched.clear();
+    $('#audioSel').style.display = 'none';
     if (eventSource) { eventSource.close(); eventSource = null; }
 
     fetch('/api/probe?path=' + encodeURIComponent(path))
@@ -930,7 +933,38 @@
     }
     if (info.has_audio) parts.push('audio');
     $('#videoMeta').textContent = parts.join(' · ');
+    populateAudioTracks(info.audio_tracks || [], !info.playable);
   }
+
+  // A multi-track file (screen recordings often carry mic + desktop separately)
+  // lets you pick which stream the preview plays. Only shown when it matters —
+  // and only wired for windowed previews, where we rebuild the block per track.
+  // A direct-play file streams as-is, so the browser owns track selection there.
+  function populateAudioTracks(tracks, isWindowed) {
+    const sel = $('#audioSel');
+    if (tracks.length < 2 || !isWindowed) { sel.style.display = 'none'; return; }
+    sel.innerHTML = '';
+    tracks.forEach(t => {
+      const bits = [];
+      if (t.title) bits.push(t.title);
+      if (t.language) bits.push(t.language);
+      if (t.channels) bits.push(t.channels === 1 ? 'mono' : t.channels === 2 ? 'stereo' : t.channels + 'ch');
+      const label = 'Track ' + (t.index + 1) + (bits.length ? ' (' + bits.join(', ') + ')' : '');
+      const opt = document.createElement('option');
+      opt.value = t.index; opt.textContent = label;
+      sel.appendChild(opt);
+    });
+    sel.value = String(audioTrack);
+    sel.style.display = '';
+  }
+
+  $('#audioSel').addEventListener('change', () => {
+    audioTrack = parseInt($('#audioSel').value, 10) || 0;
+    if (!windowed) return;               // direct-play uses the browser's default track
+    prefetched.clear();                  // per-track cache keys — start fresh
+    const at = vidMs();                  // reload the current block on the new track
+    loadWindow(winIdx, at, !player.paused);
+  });
 
   function setVideoSrc(path) {
     player.src = '/video?path=' + encodeURIComponent(path) + '&t=' + Date.now();
@@ -1062,6 +1096,9 @@
         start: tcForApi(inMs),
         stop: tcForApi(outMs),
         mode: mode,
+        // Only when the track picker is live — otherwise leave it null so the
+        // cut keeps every audio track, as it always has.
+        audio_track: $('#audioSel').style.display !== 'none' ? audioTrack : null,
       })
     })
     .then(r => r.json())

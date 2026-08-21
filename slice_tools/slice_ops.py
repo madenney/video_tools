@@ -157,7 +157,8 @@ def build_gpu_encoder_args(video_info):
 
 
 def accurate_cut(input_path, output_path, start_seconds, end_seconds,
-                 video_info=None, prefer_gpu=True, progress_cb=None):
+                 video_info=None, prefer_gpu=True, progress_cb=None,
+                 audio_track=None):
     """Frame-accurate cut by re-encoding the selected span with an accurate seek.
 
     ``-ss`` before ``-i`` seeks to the preceding keyframe, then decodes and
@@ -184,7 +185,9 @@ def accurate_cut(input_path, output_path, start_seconds, end_seconds,
             "-map", "0:v:0",
         ]
         if audio:
-            cmd += ["-map", "0:a?"]
+            # A specific track when one is chosen (multi-track recordings); all
+            # audio otherwise.
+            cmd += ["-map", f"0:a:{audio_track}?" if audio_track is not None else "0:a?"]
         cmd += encoder_args
         if audio:
             cmd += ["-c:a", "aac", "-b:a", "192k"]
@@ -247,7 +250,8 @@ def make_gif(input_path, output_path, start_seconds, end_seconds,
             run_cmd(gen)
 
 
-def stream_copy_segment(input_path, output_path, start, end):
+def stream_copy_segment(input_path, output_path, start, end, audio_track=None):
+    audio_map = f"0:a:{audio_track}?" if audio_track is not None else "0:a?"
     cmd = [
         "ffmpeg",
         "-y",
@@ -260,7 +264,7 @@ def stream_copy_segment(input_path, output_path, start, end):
         "-map",
         "0:v:0",
         "-map",
-        "0:a?",
+        audio_map,
         "-c",
         "copy",
         "-avoid_negative_ts",
@@ -341,7 +345,8 @@ def concat_segments(segment_paths, output_path, tmpdir):
     run_cmd(cmd)
 
 
-def boundary_slice(input_path, output_path, start_seconds, end_seconds):
+def boundary_slice(input_path, output_path, start_seconds, end_seconds,
+                   audio_track=None):
     video_info = probe_video_info(input_path)
     duration = probe_duration(input_path)
 
@@ -361,7 +366,7 @@ def boundary_slice(input_path, output_path, start_seconds, end_seconds):
             chunk_raw = os.path.join(tmpdir, "chunk_raw.mkv")
             chunk_intra = os.path.join(tmpdir, "chunk_intra.mkv")
 
-            stream_copy_segment(input_path, chunk_raw, region_start, region_end)
+            stream_copy_segment(input_path, chunk_raw, region_start, region_end, audio_track)
             convert_to_intraframe(chunk_raw, chunk_intra)
 
             # Cut positions relative to the extracted chunk
@@ -376,7 +381,7 @@ def boundary_slice(input_path, output_path, start_seconds, end_seconds):
             chunk_a_intra = os.path.join(tmpdir, "chunk_a_intra.mkv")
             chunk_a_cut = os.path.join(tmpdir, "chunk_a_cut.mkv")
 
-            stream_copy_segment(input_path, chunk_a_raw, chunk_a_start, chunk_a_end)
+            stream_copy_segment(input_path, chunk_a_raw, chunk_a_start, chunk_a_end, audio_track)
             convert_to_intraframe(chunk_a_raw, chunk_a_intra)
 
             rel_start_a = start_seconds - chunk_a_start
@@ -389,7 +394,7 @@ def boundary_slice(input_path, output_path, start_seconds, end_seconds):
             middle_end = end_seconds - margin
             if middle_end > middle_start:
                 middle_seg = os.path.join(tmpdir, "middle.mkv")
-                stream_copy_segment(input_path, middle_seg, middle_start, middle_end)
+                stream_copy_segment(input_path, middle_seg, middle_start, middle_end, audio_track)
                 segments.append(middle_seg)
 
             # Chunk B: boundary around stop point
@@ -397,7 +402,7 @@ def boundary_slice(input_path, output_path, start_seconds, end_seconds):
             chunk_b_intra = os.path.join(tmpdir, "chunk_b_intra.mkv")
             chunk_b_cut = os.path.join(tmpdir, "chunk_b_cut.mkv")
 
-            stream_copy_segment(input_path, chunk_b_raw, chunk_b_start, chunk_b_end)
+            stream_copy_segment(input_path, chunk_b_raw, chunk_b_start, chunk_b_end, audio_track)
             convert_to_intraframe(chunk_b_raw, chunk_b_intra)
 
             rel_start_b = 0
