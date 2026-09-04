@@ -119,6 +119,17 @@ def build_encoder_args(video_info):
     return args
 
 
+def audio_encode_args(output_path):
+    """Audio codec args matching the output container.
+
+    A webm container only accepts Opus/Vorbis — AAC in webm fails outright — so
+    re-encodes into .webm must use Opus. Everything else gets AAC.
+    """
+    if output_path.lower().endswith(".webm"):
+        return ["-c:a", "libopus", "-b:a", "192k"]
+    return ["-c:a", "aac", "-b:a", "192k"]
+
+
 NVENC_MAP = {"libx264": "h264_nvenc", "libx265": "hevc_nvenc"}
 
 # NVENC rejects some of the pixel formats the CPU encoders accept: it wants the
@@ -190,7 +201,7 @@ def accurate_cut(input_path, output_path, start_seconds, end_seconds,
             cmd += ["-map", f"0:a:{audio_track}?" if audio_track is not None else "0:a?"]
         cmd += encoder_args
         if audio:
-            cmd += ["-c:a", "aac", "-b:a", "192k"]
+            cmd += audio_encode_args(output_path)
         cmd += ["-map_chapters", "-1", "-avoid_negative_ts", "make_zero", output_path]
         return cmd
 
@@ -297,11 +308,7 @@ def cut_and_encode_segment(input_path, output_path, start, end, video_info):
             "[v]",
             "-map",
             "[a]",
-        ] + encoder_args + [
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
+        ] + encoder_args + audio_encode_args(output_path) + [
             output_path,
         ]
     else:

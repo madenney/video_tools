@@ -37,8 +37,9 @@ A browser-based editor: browse local files, scrub on a waveform timeline, set an
 in/out selection, and cut it — saved next to the source file at full quality.
 
 ```bash
-python slice_ui.py            # serves on http://127.0.0.1:5000
-python slice_ui.py -p 5055    # custom port
+npm run dev                   # serves on http://127.0.0.1:5000
+python slice_ui.py            # same thing, directly
+python slice_ui.py -p 5055    # custom port  (or: npm run dev:port)
 ```
 
 - **Preview** builds short H.264 blocks on demand, so a 45-minute HEVC file opens

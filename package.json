@@ -1,0 +1,11 @@
+{
+  "name": "video-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CLI scripts and a browser clip editor for video overlays, thumbnails, and downloads.",
+  "scripts": {
+    "dev": "python3 slice_ui.py",
+    "start": "python3 slice_ui.py",
+    "dev:port": "python3 slice_ui.py -p 5055"
+  }
+}

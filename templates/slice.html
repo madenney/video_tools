@@ -42,6 +42,15 @@
   .landing-icon { font-size: 4em; margin-bottom: 16px; opacity: 0.4; }
   .landing-text { font-size: 1.2em; color: var(--muted); margin-bottom: 6px; }
   .landing-or { color: #555c70; margin-bottom: 12px; }
+  .url-fetch { display: flex; gap: 8px; justify-content: center; margin: 4px auto 0; max-width: 460px; }
+  .url-fetch input {
+    flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px;
+    border: 1px solid #3a4152; background: #1c2130; color: var(--fg);
+    font-size: 0.95em;
+  }
+  .url-fetch input:focus { outline: none; border-color: #5b6b8c; }
+  .fetch-msg { min-height: 1.2em; margin-top: 10px; color: var(--muted); font-size: 0.9em; }
+  .fetch-msg.error { color: #e0736a; }
   .recents {
     margin-top: 28px; text-align: left;
     width: 380px; max-width: 80vw; margin-left: auto; margin-right: auto;
@@ -194,6 +203,14 @@
     <div class="landing-text">Drop a video file here</div>
     <div class="landing-or">or</div>
     <button onclick="openFile()">Open File</button>
+    <div class="landing-or">or paste a link</div>
+    <div class="url-fetch">
+      <input id="urlInput" type="text" spellcheck="false"
+             placeholder="YouTube / Twitch / X / Instagram link"
+             onkeydown="if(event.key==='Enter')fetchUrl()">
+      <button id="fetchBtn" onclick="fetchUrl()">Fetch &amp; open</button>
+    </div>
+    <div id="fetchMsg" class="fetch-msg"></div>
     <div id="recents" class="recents" style="display:none">
       <div class="recents-title">Recent</div>
       <ul id="recentList"></ul>
@@ -809,6 +826,43 @@
       } else if (data.error !== 'cancelled') alert(data.error);
     } catch (err) {
       alert('Failed to open file picker: ' + err);
+    }
+  }
+
+  // Paste a link -> server downloads it with yt-dlp -> load the saved file.
+  async function fetchUrl() {
+    const input = $('#urlInput');
+    const btn = $('#fetchBtn');
+    const msg = $('#fetchMsg');
+    const url = input.value.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      msg.className = 'fetch-msg error';
+      msg.textContent = 'Enter a full http(s) link.';
+      return;
+    }
+    btn.disabled = true; input.disabled = true;
+    msg.className = 'fetch-msg';
+    msg.textContent = 'Downloading… this can take a bit for long videos.';
+    try {
+      const res = await fetch('/api/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url }),
+      });
+      const data = await res.json();
+      if (data.path) {
+        input.value = '';
+        msg.textContent = '';
+        loadVideo(data.path);
+      } else {
+        msg.className = 'fetch-msg error';
+        msg.textContent = data.error || 'Download failed.';
+      }
+    } catch (err) {
+      msg.className = 'fetch-msg error';
+      msg.textContent = 'Download failed: ' + err;
+    } finally {
+      btn.disabled = false; input.disabled = false;
     }
   }
 

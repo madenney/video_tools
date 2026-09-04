@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,9 @@ WORKING_DIR = os.path.join(SCRIPT_DIR, ".working_copies")
 WAVE_DIR = os.path.join(WORKING_DIR, "waves")
 WINDOW_DIR = os.path.join(WORKING_DIR, "windows")
 UPLOAD_DIR = os.path.join(SCRIPT_DIR, ".uploads")
+# Where "paste a link" downloads land: the user's Downloads folder if it exists
+# and is writable, otherwise the repo's output/.
+DOWNLOAD_DIR = os.path.expanduser("~/Downloads")
 
 # Preview windows: rather than transcoding a whole 45-minute HEVC episode up
 # front (~1 min on GPU) just to play one frame, transcode a short block around
@@ -157,6 +161,68 @@ def pick_file():
     return jsonify({"error": "no_picker"}), 501
 
 
+def _download_dir():
+    """Downloads folder if usable, else the repo output/."""
+    if os.path.isdir(DOWNLOAD_DIR) and os.access(DOWNLOAD_DIR, os.W_OK):
+        return DOWNLOAD_DIR
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    return OUTPUT_DIR
+
+
+@app.route("/api/fetch", methods=["POST"])
+def fetch_url():
+    """Download a URL with yt-dlp and return the saved file path.
+
+    Tries progressively harder to get a real HD stream: plain browser cookies
+    first, then the tv_simply client (which still exposes non-SABR HD URLs) with
+    a PO token if a provider is running, and finally no cookies at all. The first
+    attempt that produces a file wins.
+    """
+    data = request.get_json(force=True)
+    url = (data.get("url") or "").strip()
+    if not re.match(r"^https?://", url):
+        return jsonify({"error": "Enter a valid http(s) link"}), 400
+
+    if not shutil.which("yt-dlp"):
+        return jsonify({"error": "yt-dlp is not installed"}), 500
+
+    out_dir = _download_dir()
+    outtmpl = os.path.join(out_dir, "%(title)s.%(ext)s")
+    base = [
+        "yt-dlp", "--js-runtimes", "node",
+        "-f", "bv*+ba/best", "--merge-output-format", "mp4",
+        "--no-playlist", "--no-simulate", "--print", "after_move:filepath",
+        "-o", outtmpl,
+    ]
+    cookies = ["--cookies-from-browser", "firefox"]
+    tv = ["--extractor-args", "youtube:player_client=tv_simply"]
+    attempts = [
+        base + cookies + [url],
+        base + cookies + tv + [url],
+        base + [url],
+    ]
+
+    last_err = "download failed"
+    for cmd in attempts:
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        except subprocess.TimeoutExpired:
+            last_err = "download timed out"
+            continue
+        if res.returncode == 0:
+            lines = [l for l in res.stdout.splitlines() if l.strip()]
+            path = lines[-1].strip() if lines else ""
+            if path and os.path.isfile(path):
+                log.info("FETCH %s -> %s", url, path)
+                return jsonify({"path": path})
+            last_err = "download finished but no file was produced"
+        else:
+            err = (res.stderr or res.stdout or "").strip().splitlines()
+            last_err = err[-1] if err else "yt-dlp failed"
+            log.info("FETCH attempt failed: %s", last_err)
+    return jsonify({"error": f"Could not download: {last_err}"}), 502
+
+
 @app.route("/api/upload", methods=["POST"])
 def upload_file():
     """Fallback for browser drag-drop: the browser can't expose a dropped
@@ -210,6 +276,21 @@ def locate_file():
     if not name:
         return jsonify({"error": "No filename"}), 400
 
+    def _size_ok(candidate):
+        try:
+            return size is None or os.path.getsize(candidate) == int(size)
+        except OSError:
+            return False
+
+    # Loose files dropped straight in the home folder are common (recordings,
+    # exports) and wouldn't be caught by walking only the named subfolders. Check
+    # the home directory's own top level first — non-recursive, so it's instant.
+    home = os.path.expanduser("~")
+    home_candidate = os.path.join(home, name)
+    if os.path.isfile(home_candidate) and _size_ok(home_candidate):
+        log.info("LOCATE hit (home root): %s -> %s", name, home_candidate)
+        return jsonify({"found": True, "path": home_candidate})
+
     # Roots are ordered cheapest/likeliest first and we return on the first
     # size-verified hit — walking every mounted drive to completion takes ~8s,
     # and a name+size match is already the file.
@@ -226,12 +307,9 @@ def locate_file():
             if name not in filenames:
                 continue
             candidate = os.path.join(dirpath, name)
-            try:
-                if size is None or os.path.getsize(candidate) == int(size):
-                    log.info("LOCATE hit: %s -> %s", name, candidate)
-                    return jsonify({"found": True, "path": candidate})
-            except OSError:
-                pass
+            if _size_ok(candidate):
+                log.info("LOCATE hit: %s -> %s", name, candidate)
+                return jsonify({"found": True, "path": candidate})
 
     log.info("LOCATE miss: %s", name)
     return jsonify({"found": False})
