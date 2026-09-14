@@ -1249,25 +1249,15 @@
     return h + ':' + String(m).padStart(2, '0') + ':' + (s < 10 ? '0' : '') + s.toFixed(3);
   }
 
-  // --- Startup: restore recents, auto-load the most recent clip if it survives ---
+  // --- Startup: show the open/recents landing page by default ---
   (function init() {
     renderRecents();
 
     // ?path=<abs path> opens a specific file straight away — lets a link load a
-    // clip without picking it by hand.
+    // clip without picking it by hand. Otherwise we stay on the landing page
+    // (open a file, paste a link, or pick a recent) rather than auto-loading.
     const wanted = new URLSearchParams(location.search).get('path');
-    if (wanted) { loadVideo(wanted); return; }
-
-    const list = getRecents();
-    if (!list.length) return;
-    const last = list[0];
-    fetch('/api/probe?path=' + encodeURIComponent(last.path))
-      .then(r => r.json())
-      .then(info => {
-        if (info && !info.error) loadVideo(last.path);
-        else removeRecent(last.path);  // file moved/deleted — drop it, stay on landing
-      })
-      .catch(() => {});
+    if (wanted) loadVideo(wanted);
   })();
 </script>
 </body>
