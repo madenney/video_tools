@@ -169,6 +169,22 @@ def _download_dir():
     return OUTPUT_DIR
 
 
+_js_runtimes_cache = None
+
+
+def _ytdlp_supports_js_runtimes():
+    """Whether the yt-dlp on PATH knows --js-runtimes (cached after first call)."""
+    global _js_runtimes_cache
+    if _js_runtimes_cache is None:
+        try:
+            out = subprocess.run(["yt-dlp", "--help"], capture_output=True,
+                                 text=True, timeout=15).stdout
+            _js_runtimes_cache = "--js-runtimes" in out
+        except Exception:
+            _js_runtimes_cache = False
+    return _js_runtimes_cache
+
+
 @app.route("/api/fetch", methods=["POST"])
 def fetch_url():
     """Download a URL with yt-dlp and return the saved file path.
@@ -188,8 +204,13 @@ def fetch_url():
 
     out_dir = _download_dir()
     outtmpl = os.path.join(out_dir, "%(title)s.%(ext)s")
-    base = [
-        "yt-dlp", "--js-runtimes", "node",
+    base = ["yt-dlp"]
+    # --js-runtimes (lets yt-dlp solve YouTube's JS challenges via node) only
+    # exists on newer yt-dlp. Include it when supported so an older binary on
+    # PATH degrades to a plain download instead of erroring out.
+    if _ytdlp_supports_js_runtimes():
+        base += ["--js-runtimes", "node"]
+    base += [
         "-f", "bv*+ba/best", "--merge-output-format", "mp4",
         "--no-playlist", "--no-simulate", "--print", "after_move:filepath",
         "-o", outtmpl,
